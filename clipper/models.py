@@ -64,6 +64,7 @@ class Moment(BaseModel):
     score: int = Field(default=50, description="Оценка виральности 0-100")
     reason: str = Field(default="", description="Почему момент интересен")
     profanity: bool = Field(default=False, description="Есть мат")
+    hooks: list[str] = Field(default_factory=list, description="2-3 альтернативные надписи-хука")
 
     @property
     def duration(self) -> float:
@@ -98,7 +99,16 @@ class Preset(BaseModel):
     subtitle_highlight: str = "FFE600"
     subtitle_y: float = 0.72
     subtitle_words: int = 3
+    subtitle_upper: bool = False
     font: str = "Arial"
+    # уникализация: видимые изменения картинки и темпа
+    mirror: bool = False
+    speed: float = 1.0
+    brightness: float = 0.0
+    contrast: float = 1.0
+    saturation: float = 1.0
+    border: int = 0
+    border_color: str = "FFFFFF"
     # баннер / водяной знак (png) поверх кадра
     banner: str | None = None
     banner_y: float = 0.9
@@ -112,3 +122,8 @@ class Preset(BaseModel):
         if not p.exists():
             raise FileNotFoundError(f"Пресет не найден: {name_or_path}")
         return cls.model_validate(json.loads(p.read_text(encoding="utf-8")))
+
+    def save(self, presets_dir: Path) -> Path:
+        path = presets_dir / f"{self.name}.json"
+        path.write_text(json.dumps(self.model_dump(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return path

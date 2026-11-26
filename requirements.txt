@@ -3,3 +3,5 @@ pydantic>=2
 faster-whisper
 anthropic
 yt-dlp
+fastapi
+uvicorn

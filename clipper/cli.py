@@ -9,8 +9,7 @@ from pathlib import Path
 
 from .media import fetch, probe
 from .models import Moment, Preset, Transcript
-from .moments import (available_pickers, pick_heuristic, pick_with_claude, pick_with_claude_cli,
-                      pick_with_ollama)
+from .moments import pick
 from .render import render_clip
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -59,28 +58,8 @@ def cmd_run(args) -> int:
     if tr and not tr.duration:
         tr.duration = info["duration"]
 
-    has_text = bool(tr and tr.segments)
-    if args.picker == "auto":
-        chain = [p for p in available_pickers() if has_text or p == "heuristic"]
-    else:
-        chain = [args.picker]
-    llm = {"claude": pick_with_claude, "claude-cli": pick_with_claude_cli, "ollama": pick_with_ollama}
-    moments = []
-    for picker in chain:
-        print(f"Ищу моменты ({picker})…", flush=True)
-        if picker == "heuristic":
-            moments = pick_heuristic(video, tr, args.count, args.min, args.max)
-            break
-        if not has_text:
-            print(f"Для «{picker}» нужна расшифровка речи.", file=sys.stderr)
-            return 2
-        try:
-            moments = llm[picker](tr, args.count, args.min, args.max)
-            break
-        except Exception as exc:  # любой сбой нейросети — пробуем следующий способ
-            print(f"  {picker} не сработал: {exc}", file=sys.stderr)
-            if picker == chain[-1]:
-                return 1
+    moments, _ = pick(video, tr, args.picker, args.count, args.min, args.max,
+                      log=lambda msg: print(msg, flush=True))
     if not moments:
         print("Подходящих моментов не нашлось.", file=sys.stderr)
         return 1

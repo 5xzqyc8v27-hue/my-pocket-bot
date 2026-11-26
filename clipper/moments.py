@@ -24,6 +24,7 @@ SYSTEM = """Ты — редактор коротких вертикальных 
 - Момент должен быть понятен без контекста, начинаться с зацепки и заканчиваться
   на завершённой фразе или реакции. Границы ставь по таймкодам строк расшифровки.
 - title — надпись на экране, до 6 слов, без кавычек и эмодзи, на языке видео.
+- hooks — ещё 2-3 варианта надписи в другом стиле (вопрос, интрига, цитата).
 - score — честная оценка 0-100; слабые моменты лучше не включать совсем.
 - profanity=true, если в моменте есть мат.
 - Моменты не должны пересекаться."""
@@ -47,7 +48,7 @@ def _prompt(tr: Transcript, count: int, min_len: float, max_len: float) -> str:
 JSON_RULE = (
     "\n\nОтветь только JSON-объектом без пояснений и без markdown, вида: "
     '{"moments": [{"start": 0.0, "end": 0.0, "title": "", "caption": "", '
-    '"hashtags": [], "score": 0, "reason": "", "profanity": false}]}'
+    '"hashtags": [], "score": 0, "reason": "", "profanity": false, "hooks": []}]}'
 )
 
 
@@ -229,3 +230,24 @@ def _clean(moments: list[Moment], duration: float, min_len: float, max_len: floa
         if len(kept) >= count:
             break
     return sorted(kept, key=lambda m: m.start)
+
+
+def pick(video: Path, tr: Transcript | None, picker: str, count: int, min_len: float,
+         max_len: float, log=print) -> tuple[list[Moment], str]:
+    """Выбирает моменты указанным способом; в режиме auto перебирает доступные по очереди."""
+    has_text = bool(tr and tr.segments)
+    chain = [p for p in available_pickers() if has_text or p == "heuristic"] if picker == "auto" else [picker]
+    llm = {"claude": pick_with_claude, "claude-cli": pick_with_claude_cli, "ollama": pick_with_ollama}
+    for name in chain:
+        log(f"Ищу моменты ({name})…")
+        if name == "heuristic":
+            return pick_heuristic(video, tr, count, min_len, max_len), name
+        if not has_text:
+            raise RuntimeError(f"Для «{name}» нужна расшифровка речи")
+        try:
+            return llm[name](tr, count, min_len, max_len), name
+        except Exception as exc:  # любой сбой нейросети — пробуем следующий способ
+            log(f"  {name} не сработал: {exc}")
+            if name == chain[-1]:
+                raise RuntimeError(f"{name} не сработал: {exc}") from exc
+    return [], "none"

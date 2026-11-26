@@ -41,6 +41,7 @@ def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
               preset: Preset) -> str:
     """Собирает ASS: надпись-хук на весь ролик и субтитры с подсветкой текущего слова."""
     w, h = preset.width, preset.height
+    speed = preset.speed or 1.0
     out = HEADER.format(
         w=w, h=h, font=preset.font,
         sub_size=preset.subtitle_size, sub_color=ass_color(preset.subtitle_color),
@@ -62,14 +63,12 @@ def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
         for i in range(0, len(words), n):
             group = words[i:i + n]
             for j, word in enumerate(group):
-                start = word.start - clip_start
-                end = (group[j + 1].start if j + 1 < len(group) else word.end) - clip_start
+                start = (word.start - clip_start) / speed
+                end = ((group[j + 1].start if j + 1 < len(group) else word.end) - clip_start) / speed
                 start, end = max(0.0, start), min(clip_len, end)
                 if end - start < 0.02:
                     continue
-                parts = [
-                    f"{{\\c{hi}&}}{_escape(g.text)}{{\\c{base}&}}" if k == j else _escape(g.text)
-                    for k, g in enumerate(group)
-                ]
+                texts = [_escape(g.text.upper() if preset.subtitle_upper else g.text) for g in group]
+                parts = [f"{{\\c{hi}&}}{t}{{\\c{base}&}}" if k == j else t for k, t in enumerate(texts)]
                 lines.append(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Sub,{pos}{' '.join(parts)}")
     return out + "\n".join(lines) + "\n"

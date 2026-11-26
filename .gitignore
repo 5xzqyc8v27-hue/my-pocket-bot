@@ -1,0 +1,6 @@
+out/
+__pycache__/
+*.transcript.json
+.env
+.venv/
+.pytest_cache/

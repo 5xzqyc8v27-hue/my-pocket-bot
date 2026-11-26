@@ -22,6 +22,7 @@ from .moments import available_pickers, pick
 from .reference import analyze_reference
 from .render import render_clip, render_frame
 from .top import render_top
+from .variety import vary
 
 ROOT = Path(__file__).resolve().parent.parent
 PRESETS = ROOT / "presets"
@@ -109,7 +110,7 @@ def analyze_job(pid: str, opts: dict) -> None:
         p["scenes"] = detect_scenes(video)
         set_status(p, "moments", "Ищу сильные моменты…")
         moments, used = pick(video, tr, opts["picker"], opts["count"], opts["min"], opts["max"],
-                             log=lambda msg: set_status(p, "moments", msg))
+                             log=lambda msg: set_status(p, "moments", msg), focus=opts.get("focus", ""))
         with lock:
             p["picker"] = used
             p["moments"] = [m.model_dump() for m in sorted(moments, key=lambda m: -m.score)]
@@ -119,20 +120,22 @@ def analyze_job(pid: str, opts: dict) -> None:
         set_status(p, "error", str(exc)[:500])
 
 
-def render_job(pid: str, indexes: list[int], preset: Preset) -> None:
+def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False) -> None:
     p = state["projects"][pid]
     video, tr = Path(p["video"]), transcript_of(p)
     out_dir = DATA / "clips" / pid
     try:
         for n, i in enumerate(indexes, 1):
             m = Moment.model_validate(p["moments"][i])
+            preset = vary(base, seed=int(time.time() * 1000) + i) if varied else base
             set_status(p, "render", f"Монтирую {n} из {len(indexes)}: {m.title or 'без названия'}")
             name = f"{int(m.start):05d}_{slug(m.title)}_{preset.name}_{uuid.uuid4().hex[:4]}.mp4"
             render_clip(video, m, preset, out_dir / name, tr, filler_of(p))
             with lock:
                 p.setdefault("clips", []).insert(0, {
                     "file": name, "title": m.title, "caption": m.caption, "hashtags": m.hashtags,
-                    "score": m.score, "profanity": m.profanity, "preset": preset.name,
+                    "score": m.score, "profanity": m.profanity,
+                    "preset": preset.name + (" · вариация" if varied else ""),
                     "start": m.start, "end": m.end, "speed": preset.speed, "created": time.time()})
         set_status(p, "ready", f"Смонтировано роликов: {len(indexes)}")
     except Exception as exc:
@@ -152,6 +155,7 @@ class NewProject(BaseModel):
     lang: str = "ru"
     filler: str = ""
     streamer: str = ""
+    focus: str = ""
 
 
 class MomentPatch(BaseModel):
@@ -172,6 +176,7 @@ class RenderReq(BaseModel):
     project: str
     moments: list[int]
     preset: Preset
+    vary: bool = False
 
 
 @app.get("/")
@@ -186,6 +191,36 @@ def get_state():
         return {"projects": state["projects"], "presets": presets, "pickers": available_pickers(),
                 "defaults": Preset().model_dump(), "references": state["references"],
                 "assets": list_assets(), "kinds": KINDS}
+
+
+@app.get("/api/health")
+def health():
+    """Автопроверка: что установлено и что ещё нужно настроить."""
+    import importlib.util
+    import os
+    import shutil
+
+    from .moments import ollama_available
+
+    def lib(name: str) -> bool:
+        return importlib.util.find_spec(name) is not None
+
+    checks = [
+        ("ffmpeg", "Монтаж видео", shutil.which("ffmpeg") is not None, True, "brew install ffmpeg"),
+        ("yt-dlp", "Скачивание по ссылкам", shutil.which("yt-dlp") is not None, False, "pip install yt-dlp"),
+        ("faster-whisper", "Распознавание речи: субтитры и выбор по смыслу", lib("faster_whisper"), False,
+         "pip install faster-whisper (модель скачается сама при первом запуске)"),
+        ("Claude по API", "Выбор моментов за кредиты", bool(os.environ.get("ANTHROPIC_API_KEY")), False,
+         "export ANTHROPIC_API_KEY=ваш_ключ — перед запуском панели"),
+        ("Claude по подписке", "Выбор моментов и разбор примеров без кредитов", shutil.which("claude") is not None,
+         False, "Установить Claude Code, запустить claude и выполнить /login"),
+        ("Ollama", "Локальная нейросеть, бесплатно", ollama_available(), False,
+         "brew install ollama && ollama serve && ollama pull qwen2.5:7b"),
+        ("pycapcut", "Экспорт в CapCut", lib("pycapcut"), False, "pip install pycapcut"),
+        ("CapCut", "Папка проектов CapCut найдена", default_drafts_dir() is not None, False,
+         "Установить CapCut и один раз создать в нём любой проект"),
+    ]
+    return [{"name": n, "what": w, "ok": ok, "required": req, "fix": fix} for n, w, ok, req, fix in checks]
 
 
 @app.post("/api/projects")
@@ -289,7 +324,7 @@ def render(req: RenderReq):
     if bad or not req.moments:
         raise HTTPException(400, "Выберите моменты для монтажа")
     set_status(p, "render", "Запускаю монтаж…")
-    threading.Thread(target=render_job, args=(req.project, req.moments, req.preset), daemon=True).start()
+    threading.Thread(target=render_job, args=(req.project, req.moments, req.preset, req.vary), daemon=True).start()
     return {"ok": True}
 
 

@@ -16,7 +16,22 @@ def _cover(w: int, h: int) -> str:
     return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
 
 
-def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: str | None) -> str:
+def camera_filter(preset: Preset, length: float, peaks: list[float]) -> str | None:
+    """Движение камеры по готовому кадру: медленный наезд и резкие наезды на громких местах."""
+    k, fps = preset.camera_strength, preset.fps
+    terms = []
+    if preset.camera in ("push", "both"):
+        terms.append(f"{k * 0.6:.4f}*on/{max(1, int(length * fps))}")
+    if preset.camera in ("punch", "both"):
+        terms += [f"{k:.4f}*max(0,1-abs(on/{fps}-{c:.2f})/0.35)" for c in peaks]
+    if not terms:
+        return None
+    return (f"zoompan=z='1+{'+'.join(terms)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+            f":d=1:s={preset.width}x{preset.height}:fps={fps}")
+
+
+def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: str | None,
+                 camera: str | None = None) -> str:
     """Собирает filter_complex под раскладку. Входы: 0 — исходник, 1 — залипалка, далее баннер."""
     W, H = preset.width, preset.height
     layout = preset.layout
@@ -60,6 +75,9 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
         raise ValueError(f"Неизвестная раскладка: {preset.layout}")
 
     last = "v"
+    if camera:
+        parts.append(f"[v]fps={preset.fps},{camera}[vc]")
+        last = "vc"
     if has_banner:
         idx = 2 if has_filler else 1
         bw = _even(W * preset.banner_width)
@@ -76,7 +94,7 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
 
 
 def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcript | None,
-             filler: Path | None, tmp: Path, seek: float = 0.0) -> list[str]:
+             filler: Path | None, tmp: Path, camera: str | None = None) -> list[str]:
     """Общая часть команды ffmpeg для ролика и для кадра предпросмотра."""
     use_filler = bool(filler) and preset.layout == "split"
     banner = Path(preset.banner) if preset.banner else None
@@ -95,7 +113,7 @@ def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcrip
         cmd += ["-stream_loop", "-1", "-i", str(Path(filler).resolve())]
     if banner:
         cmd += ["-i", str(banner.resolve())]
-    return cmd + ["-filter_complex", build_filter(preset, use_filler, bool(banner), ass_name)]
+    return cmd + ["-filter_complex", build_filter(preset, use_filler, bool(banner), ass_name, camera)]
 
 
 def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
@@ -103,8 +121,13 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
     """Вырезает момент и монтирует его в вертикальный ролик."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_len = moment.duration / preset.speed
+    peaks = []
+    if preset.camera in ("punch", "both"):
+        from .moments import loud_peaks
+        peaks = [p / preset.speed for p in loud_peaks(source, moment.start, moment.duration)]
+    camera = camera_filter(preset, out_len, peaks)
     with tempfile.TemporaryDirectory() as tmp:
-        cmd = _prepare(source, moment, preset, transcript, filler, Path(tmp))
+        cmd = _prepare(source, moment, preset, transcript, filler, Path(tmp), camera)
         cmd += ["-map", "[out]", "-map", "0:a?", "-t", f"{out_len:.3f}"]
         if preset.speed != 1.0:
             cmd += ["-af", f"atempo={preset.speed}"]

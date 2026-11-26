@@ -64,6 +64,7 @@ class Moment(BaseModel):
     score: int = Field(default=50, description="Оценка виральности 0-100")
     reason: str = Field(default="", description="Почему момент интересен")
     profanity: bool = Field(default=False, description="Есть мат")
+    category: str = Field(default="", description="Тип момента: смешное, мем, фейл, эмоция, конфликт, скилл, цитата, история")
     hooks: list[str] = Field(default_factory=list, description="2-3 альтернативные надписи-хука")
 
     @property
@@ -114,6 +115,9 @@ class Preset(BaseModel):
     saturation: float = 1.0
     border: int = 0
     border_color: str = "FFFFFF"
+    # движение камеры: none, push (медленный наезд), punch (резкие наезды на громких местах), both
+    camera: str = "none"
+    camera_strength: float = 0.12
     # баннер / водяной знак (png) поверх кадра
     banner: str | None = None
     banner_y: float = 0.9

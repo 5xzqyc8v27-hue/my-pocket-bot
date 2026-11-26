@@ -24,6 +24,7 @@ SYSTEM = """Ты — редактор коротких вертикальных 
 - Момент должен быть понятен без контекста, начинаться с зацепки и заканчиваться
   на завершённой фразе или реакции. Границы ставь по таймкодам строк расшифровки.
 - title — надпись на экране, до 6 слов, без кавычек и эмодзи, на языке видео.
+- category — одно слово из списка: смешное, мем, фейл, эмоция, конфликт, скилл, цитата, история.
 - hooks — ещё 2-3 варианта надписи в другом стиле (вопрос, интрига, цитата).
 - score — честная оценка 0-100; слабые моменты лучше не включать совсем.
 - profanity=true, если в моменте есть мат.
@@ -38,8 +39,9 @@ def _format_transcript(tr: Transcript) -> str:
     return "\n".join(f"[{s.start:.1f}-{s.end:.1f}] {s.text}" for s in tr.segments)
 
 
-def _prompt(tr: Transcript, count: int, min_len: float, max_len: float) -> str:
-    return (
+def _prompt(tr: Transcript, count: int, min_len: float, max_len: float, focus: str = "") -> str:
+    want = f"Особенно ищи моменты такого типа: {focus}.\n" if focus.strip() else ""
+    return want + (
         f"Нужно до {count} моментов длиной от {min_len:.0f} до {max_len:.0f} секунд.\n"
         f"Длительность видео: {tr.duration:.0f} с.\n\nРасшифровка:\n{_format_transcript(tr)}"
     )
@@ -48,7 +50,7 @@ def _prompt(tr: Transcript, count: int, min_len: float, max_len: float) -> str:
 JSON_RULE = (
     "\n\nОтветь только JSON-объектом без пояснений и без markdown, вида: "
     '{"moments": [{"start": 0.0, "end": 0.0, "title": "", "caption": "", '
-    '"hashtags": [], "score": 0, "reason": "", "profanity": false, "hooks": []}]}'
+    '"hashtags": [], "score": 0, "reason": "", "profanity": false, "category": "", "hooks": []}]}'
 )
 
 
@@ -67,14 +69,14 @@ def claude_cli_available() -> bool:
     return shutil.which("claude") is not None
 
 
-def pick_with_claude_cli(tr: Transcript, count: int, min_len: float, max_len: float) -> list[Moment]:
+def pick_with_claude_cli(tr: Transcript, count: int, min_len: float, max_len: float, focus: str = "") -> list[Moment]:
     """Выбор моментов через установленный Claude Code (`claude -p`).
 
     Работает от подписки Claude (Pro/Max), API-кредиты не тратит.
     Нужно один раз войти: запустить `claude` и выполнить /login.
     """
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}  # иначе спишет с API
-    prompt = SYSTEM + "\n\n" + _prompt(tr, count, min_len, max_len) + JSON_RULE
+    prompt = SYSTEM + "\n\n" + _prompt(tr, count, min_len, max_len, focus) + JSON_RULE
     try:
         proc = subprocess.run(["claude", "-p", "--output-format", "json"], input=prompt,
                               capture_output=True, text=True, timeout=900, env=env)
@@ -107,13 +109,13 @@ def ollama_available() -> bool:
 
 
 def pick_with_ollama(tr: Transcript, count: int, min_len: float, max_len: float,
-                     model: str = OLLAMA_MODEL) -> list[Moment]:
+                     model: str = OLLAMA_MODEL, focus: str = "") -> list[Moment]:
     """Выбор моментов локальной нейросетью через Ollama — бесплатно и без интернета."""
     body = json.dumps({
         "model": model, "stream": False, "format": _Picked.model_json_schema(),
         "options": {"num_ctx": 32768},
         "messages": [{"role": "system", "content": SYSTEM},
-                     {"role": "user", "content": _prompt(tr, count, min_len, max_len) + JSON_RULE}],
+                     {"role": "user", "content": _prompt(tr, count, min_len, max_len, focus) + JSON_RULE}],
     }).encode()
     req = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=body,
                                  headers={"Content-Type": "application/json"})
@@ -142,12 +144,12 @@ def available_pickers() -> list[str]:
 
 
 def pick_with_claude(tr: Transcript, count: int, min_len: float, max_len: float,
-                     model: str = DEFAULT_MODEL) -> list[Moment]:
+                     model: str = DEFAULT_MODEL, focus: str = "") -> list[Moment]:
     """Выбор моментов через Claude API. Нужен ANTHROPIC_API_KEY (или `ant auth login`)."""
     import anthropic
 
     client = anthropic.Anthropic()
-    prompt = _prompt(tr, count, min_len, max_len)
+    prompt = _prompt(tr, count, min_len, max_len, focus)
     response = client.messages.parse(
         model=model,
         max_tokens=16000,
@@ -160,16 +162,35 @@ def pick_with_claude(tr: Transcript, count: int, min_len: float, max_len: float,
     return _clean(response.parsed_output.moments, tr.duration, min_len, max_len, count)
 
 
-def _loudness(video: Path, rate: int = 8000) -> np.ndarray:
-    """Громкость (RMS) по секундам."""
+def _loudness(video: Path, rate: int = 8000, start: float | None = None, length: float | None = None,
+              step: float = 1.0) -> np.ndarray:
+    """Громкость (RMS) по отрезкам длиной step секунд."""
+    seek = ["-ss", f"{start:.3f}", "-t", f"{length:.3f}"] if start is not None else []
     raw = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(video), "-vn", "-ac", "1", "-ar", str(rate),
+        ["ffmpeg", "-v", "error", *seek, "-i", str(video), "-vn", "-ac", "1", "-ar", str(rate),
          "-f", "s16le", "-"], capture_output=True, check=True).stdout
     audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
-    n = len(audio) // rate
+    size = int(rate * step)
+    n = len(audio) // size
     if n == 0:
         return np.zeros(1, dtype=np.float32)
-    return np.sqrt((audio[: n * rate].reshape(n, rate) ** 2).mean(axis=1))
+    return np.sqrt((audio[: n * size].reshape(n, size) ** 2).mean(axis=1))
+
+
+def loud_peaks(video: Path, start: float, length: float, count: int = 3, gap: float = 2.5) -> list[float]:
+    """Самые громкие места отрезка (секунды от его начала) — для резких наездов камеры."""
+    step = 0.25
+    loud = _loudness(video, start=start, length=length, step=step)
+    if len(loud) < 4 or loud.std() < 1e-6:
+        return []
+    peaks: list[float] = []
+    for idx in np.argsort(-loud):
+        t = float(idx) * step
+        if loud[idx] < loud.mean() + loud.std() or len(peaks) >= count:
+            break
+        if 0.8 < t < length - 0.8 and all(abs(t - p) >= gap for p in peaks):
+            peaks.append(round(t, 2))
+    return sorted(peaks)
 
 
 def pick_heuristic(video: Path, tr: Transcript | None, count: int, min_len: float,
@@ -233,7 +254,7 @@ def _clean(moments: list[Moment], duration: float, min_len: float, max_len: floa
 
 
 def pick(video: Path, tr: Transcript | None, picker: str, count: int, min_len: float,
-         max_len: float, log=print) -> tuple[list[Moment], str]:
+         max_len: float, log=print, focus: str = "") -> tuple[list[Moment], str]:
     """Выбирает моменты указанным способом; в режиме auto перебирает доступные по очереди."""
     has_text = bool(tr and tr.segments)
     chain = [p for p in available_pickers() if has_text or p == "heuristic"] if picker == "auto" else [picker]
@@ -245,7 +266,7 @@ def pick(video: Path, tr: Transcript | None, picker: str, count: int, min_len: f
         if not has_text:
             raise RuntimeError(f"Для «{name}» нужна расшифровка речи")
         try:
-            return llm[name](tr, count, min_len, max_len), name
+            return llm[name](tr, count, min_len, max_len, focus=focus), name
         except Exception as exc:  # любой сбой нейросети — пробуем следующий способ
             log(f"  {name} не сработал: {exc}")
             if name == chain[-1]:

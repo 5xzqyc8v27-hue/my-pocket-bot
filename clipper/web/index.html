@@ -87,6 +87,8 @@ input[type=color]{width:100%;height:30px;padding:0;border:1px solid var(--line);
         <div class="field"><label>До, с</label><input type="number" id="max" value="60" min="10"></div>
       </div>
       <div class="field"><label>Кто выбирает моменты</label><select id="picker"></select></div>
+      <div class="field"><label>Что искать</label>
+        <select id="focus"><option value="">Всё сильное</option><option value="смешное, приколы, мемы">Смешное и мемы</option><option value="фейлы, провалы, неудачи">Фейлы</option><option value="яркие эмоции, крики, реакции">Эмоции и реакции</option><option value="конфликты, споры, ругань">Конфликты</option><option value="красивая игра, скилл, клатчи">Игровые моменты</option><option value="сильные мысли, цитаты, истории">Мысли и истории</option></select></div>
       <div class="field"><label>Распознавание речи</label>
         <select id="whisper"><option value="small">Быстрое (small)</option><option value="medium">Точнее (medium)</option><option value="large-v3">Лучшее (large-v3)</option><option value="off">Выключить</option></select></div>
       <div class="field"><label>Стример (для его материалов)</label><input type="text" id="streamer" list="owners" placeholder="например evelone"><datalist id="owners"></datalist></div>
@@ -149,6 +151,8 @@ const TABS = {
     ['font', 'Шрифт (имя в системе)', 'text'],
   ],
   'Уникализация': [
+    ['camera', 'Движение камеры', 'select', {none: 'Нет', push: 'Плавный наезд', punch: 'Резкие наезды на громких местах', both: 'Оба'}],
+    ['camera_strength', 'Сила наезда', 'range', [0.04, 0.3, 0.01]],
     ['mirror', 'Отзеркалить', 'bool'],
     ['speed', 'Скорость', 'range', [0.9, 1.15, 0.01]],
     ['brightness', 'Яркость', 'range', [-0.15, 0.15, 0.01]],
@@ -169,6 +173,7 @@ const SUB_STYLES = {
   'По слову': {subtitle_color: 'FFE600', subtitle_highlight: 'FFFFFF', subtitle_upper: true, subtitle_words: 1, subtitle_size: 100},
   'Спокойные': {subtitle_color: 'E8EAED', subtitle_highlight: 'FF8AD8', subtitle_upper: false, subtitle_words: 4, subtitle_size: 58},
 };
+let catFilter = '', varyOn = true, health = null;
 let view = 'Проект', owner = 'common', kind = 'photos';
 let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
 
@@ -215,6 +220,7 @@ function momentCard(p, m, i) {
       h('input', {type: 'checkbox', checked: picked.has(i), title: 'Выбрать для монтажа', onchange: e => { e.target.checked ? picked.add(i) : picked.delete(i); updateRenderBtn(); }}),
       h('span', {class: 'score'}, '★' + m.score),
       h('span', {class: 'mute'}, `${(m.end - m.start).toFixed(0)} с · склеек ${cuts}`),
+      m.category && h('span', {class: 'pill'}, m.category),
       m.profanity && h('span', {class: 'pill warn'}, 'мат')),
     h('input', {type: 'text', value: m.title, placeholder: 'Надпись-хук', onchange: e => save({title: e.target.value})}),
     (m.hooks || []).length ? h('div', {class: 'hooks'}, m.hooks.map(x => h('button', {class: 'btn small', title: 'Поставить этот хук', onclick: () => save({title: x}).then(renderMain)}, x))) : null,
@@ -261,7 +267,18 @@ function renderRefs() {
         h('div', {}, r.notes)] : h('div', {class: r.status === 'error' ? 'status error' : 'mute'}, r.message)))) : [h('div', {class: 'empty'}, 'Примеров пока нет.')]));
 }
 
+async function renderHealth() {
+  if (!health) { $('#main').replaceChildren(h('div', {class: 'empty'}, 'Проверяю…')); health = await (await api('/api/health')).json(); if (view !== 'Настройка') return; }
+  $('#main').replaceChildren(
+    h('div', {}, h('h1', {}, 'Настройка'), h('div', {class: 'mute'}, 'Панель сама проверяет, что установлено. Зелёное — работает; для остального показана команда, которую нужно выполнить в Терминале.')),
+    h('div', {class: 'card'}, health.map(c => h('div', {style: 'padding:9px 0;border-bottom:1px solid var(--line)'},
+      h('span', {class: 'pill ' + (c.ok ? 'good' : c.required ? 'bad' : 'warn')}, c.ok ? 'готово' : c.required ? 'обязательно' : 'не настроено'), ' ', h('b', {}, c.name), ' — ', c.what,
+      !c.ok && h('div', {class: 'mute', style: 'margin-top:4px;font-family:ui-monospace,monospace'}, c.fix))),
+      h('button', {class: 'btn', style: 'margin-top:12px', onclick: () => { health = null; renderHealth(); }}, 'Проверить ещё раз')));
+}
+
 function renderMain() {
+  if (view === 'Настройка') return renderHealth();
   if (view === 'Материалы') return renderAssets();
   if (view === 'Примеры') return renderRefs();
   const main = $('#main'), p = S.projects[cur];
@@ -272,8 +289,11 @@ function renderMain() {
     h('div', {style: 'flex:none'}, h('button', {class: 'btn', onclick: async () => { if (confirm('Удалить проект из списка? Файлы роликов останутся на диске.')) { await api('/api/projects/' + p.id, 'DELETE'); cur = null; refresh(); } }}, 'Удалить проект')));
   const status = h('div', {class: 'status' + (p.status === 'error' ? ' error' : '')}, (STATUS[p.status] || p.status) + ': ' + (p.message || ''), p.warning ? ' · ' + p.warning : '');
 
+  const cats = [...new Set(p.moments.map(m => m.category).filter(Boolean))];
+  if (!cats.includes(catFilter)) catFilter = '';
   const moments = h('div', {class: 'card'}, h('h2', {}, 'Моменты'),
-    p.moments.length ? p.moments.map((m, i) => momentCard(p, m, i)) : h('div', {class: 'mute'}, busy ? 'Идёт анализ…' : 'Моментов нет'),
+    cats.length > 1 && h('div', {class: 'hooks', style: 'margin:0 0 10px'}, ['', ...cats].map(c => h('button', {class: 'btn small' + (c === catFilter ? ' primary' : ''), onclick: () => { catFilter = c; renderMain(); }}, c || 'все'))),
+    p.moments.length ? p.moments.map((m, i) => (!catFilter || m.category === catFilter) && momentCard(p, m, i)) : h('div', {class: 'mute'}, busy ? 'Идёт анализ…' : 'Моментов нет'),
     h('button', {class: 'btn small', disabled: !p.video, onclick: async () => { const s = +prompt('Начало момента, секунды', '0'); const e = +prompt('Конец момента, секунды', String(s + 30)); if (e > s) { await api(`/api/projects/${p.id}/moments`, 'POST', {start: s, end: e, title: ''}); refresh(); } }}, '+ Свой момент'));
 
   const editor = h('div', {class: 'card'}, h('h2', {}, 'Оформление'),
@@ -288,9 +308,10 @@ function renderMain() {
   const pv = h('div', {class: 'card pv'}, h('h2', {}, 'Предпросмотр'),
     h('div', {class: 'preview'}, h('img', {id: 'pvimg', hidden: true, alt: 'Кадр ролика'}), h('div', {class: 'hint', id: 'pvhint'}, p.moments.length ? 'Загружаю кадр…' : 'Появится, когда найдутся моменты')),
     h('div', {class: 'field', style: 'margin-top:8px'}, h('label', {}, 'Момент ролика'), h('input', {type: 'range', min: 0, max: 0.98, step: 0.02, value: at, oninput: e => { at = +e.target.value; queuePreview(); }})),
+    h('label', {class: 'check', title: 'Каждый ролик получит свою вариацию: положение и стиль текста, камера, скорость, цвет'}, h('input', {type: 'checkbox', checked: varyOn, onchange: e => { varyOn = e.target.checked; }}), 'Разнообразить ролики'),
     h('button', {class: 'btn primary', id: 'renderBtn', style: 'width:100%', disabled: busy || !p.moments.length, onclick: async () => {
       const list = picked.size ? [...picked] : p.moments.map((_, i) => i);
-      try { await api('/api/render', 'POST', {project: p.id, moments: list, preset}); refresh(); } catch (e) { alert(e.message); } }}, 'Смонтировать все'),
+      try { await api('/api/render', 'POST', {project: p.id, moments: list, preset, vary: varyOn && list.length > 1}); refresh(); } catch (e) { alert(e.message); } }}, 'Смонтировать все'),
     h('button', {class: 'btn', style: 'width:100%;margin-top:8px', disabled: busy || !p.moments.length, title: 'Создать проект CapCut с этим моментом, хуком и субтитрами', onclick: async () => {
       try { const r = await (await api('/api/capcut', 'POST', {project: p.id, moment: mom, preset})).json();
         alert(r.capcut_found ? 'Черновик создан — откройте CapCut, он появится в списке проектов.' : 'CapCut на этом компьютере не найден. Черновик сохранён в папку:\n' + r.path); } catch (e) { alert(e.message); } }}, 'Открыть момент в CapCut'));
@@ -318,7 +339,7 @@ function renderMain() {
   updateRenderBtn(); queuePreview();
 }
 
-function renderNav() { $('#nav').replaceChildren(...['Проект', 'Материалы', 'Примеры'].map(v => h('button', {class: 'tab' + (v === view ? ' active' : ''), onclick: () => { view = v; renderAll(); }}, v)));
+function renderNav() { $('#nav').replaceChildren(...['Проект', 'Материалы', 'Примеры', 'Настройка'].map(v => h('button', {class: 'tab' + (v === view ? ' active' : ''), onclick: () => { view = v; renderAll(); }}, v)));
   $('#owners').replaceChildren(...Object.keys(S.assets).filter(o => o !== 'common').map(o => h('option', {value: o}))); }
 function renderAll() { renderNav(); renderProjects(); renderMain(); }
 let lastSig = '';
@@ -336,7 +357,7 @@ $('#add').onclick = async () => {
     let source = $('#src').value.trim(); const f = $('#file').files[0];
     if (f) { btn.textContent = 'Загружаю файл…'; source = (await (await fetch('/api/upload?name=' + encodeURIComponent(f.name), {method: 'PUT', body: f})).json()).path; }
     if (!source) throw new Error('Укажите ссылку, путь или выберите файл');
-    const r = await (await api('/api/projects', 'POST', {source, picker: $('#picker').value, count: +$('#count').value, min: +$('#min').value, max: +$('#max').value, whisper: $('#whisper').value, filler: $('#filler').value, streamer: $('#streamer').value})).json();
+    const r = await (await api('/api/projects', 'POST', {source, picker: $('#picker').value, count: +$('#count').value, min: +$('#min').value, max: +$('#max').value, whisper: $('#whisper').value, filler: $('#filler').value, streamer: $('#streamer').value, focus: $('#focus').value})).json();
     cur = r.id; mom = 0; picked = new Set(); $('#src').value = ''; $('#file').value = ''; await refresh();
   } catch (e) { alert(e.message); }
   btn.disabled = false; btn.textContent = 'Найти моменты';

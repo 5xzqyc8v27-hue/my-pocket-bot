@@ -19,7 +19,9 @@ from .capcut import default_drafts_dir, export_draft
 from .media import fetch, probe
 from .models import Moment, Preset, Transcript
 from .moments import available_pickers, pick
+from .reference import analyze_reference
 from .render import render_clip, render_frame
+from .top import render_top
 
 ROOT = Path(__file__).resolve().parent.parent
 PRESETS = ROOT / "presets"
@@ -29,13 +31,20 @@ WEB = Path(__file__).resolve().parent / "web"
 
 app = FastAPI(title="Clipper")
 lock = threading.RLock()
-state: dict = {"projects": {}}
+state: dict = {"projects": {}, "references": {}}
+ASSETS = DATA / "assets"
+KINDS = {"photos": "Фото и вырезки", "emoji": "Эмодзи и стикеры", "fonts": "Шрифты", "sounds": "Звуки",
+         "banners": "Баннеры", "fillers": "Залипалки", "templates": "Шаблоны"}
 
 
 def load_state() -> None:
     DATA.mkdir(exist_ok=True)
     if STATE_FILE.exists():
         state.update(json.loads(STATE_FILE.read_text(encoding="utf-8")))
+    state.setdefault("references", {})
+    for r in state["references"].values():
+        if r["status"] == "work":
+            r["status"], r["message"] = "error", "Прервано перезапуском панели"
     for p in state["projects"].values():  # после перезапуска незавершённые задачи считаем прерванными
         if p["status"] not in ("ready", "error"):
             p["status"], p["message"] = "error", "Прервано перезапуском панели"
@@ -142,6 +151,7 @@ class NewProject(BaseModel):
     whisper: str = "small"
     lang: str = "ru"
     filler: str = ""
+    streamer: str = ""
 
 
 class MomentPatch(BaseModel):
@@ -174,7 +184,8 @@ def get_state():
     presets = [Preset.load(str(f), PRESETS).model_dump() for f in sorted(PRESETS.glob("*.json"))]
     with lock:
         return {"projects": state["projects"], "presets": presets, "pickers": available_pickers(),
-                "defaults": Preset().model_dump()}
+                "defaults": Preset().model_dump(), "references": state["references"],
+                "assets": list_assets(), "kinds": KINDS}
 
 
 @app.post("/api/projects")
@@ -183,7 +194,8 @@ def new_project(req: NewProject):
     with lock:
         state["projects"][pid] = {"id": pid, "source": req.source.strip(), "title": req.source.strip()[-60:],
                                   "status": "queued", "message": "В очереди", "moments": [], "clips": [],
-                                  "filler": req.filler.strip(), "created": time.time()}
+                                  "filler": req.filler.strip(), "streamer": slug(req.streamer, "common"),
+                                  "created": time.time()}
     save_state()
     threading.Thread(target=analyze_job, args=(pid, req.model_dump()), daemon=True).start()
     return {"id": pid}
@@ -279,6 +291,138 @@ def render(req: RenderReq):
     set_status(p, "render", "Запускаю монтаж…")
     threading.Thread(target=render_job, args=(req.project, req.moments, req.preset), daemon=True).start()
     return {"ok": True}
+
+
+# ---------- материалы: общие и по стримерам ----------
+
+def list_assets() -> dict:
+    out: dict = {"common": {k: [] for k in KINDS}}
+    if ASSETS.is_dir():
+        for owner in sorted(ASSETS.iterdir()):
+            if owner.is_dir():
+                out[owner.name] = {k: sorted(f.name for f in (owner / k).glob("*") if f.is_file())
+                                   for k in KINDS}
+    return out
+
+
+def asset_path(owner: str, kind: str, name: str) -> Path:
+    if kind not in KINDS:
+        raise HTTPException(400, "Неизвестный тип материала")
+    return ASSETS / slug(owner, "common") / kind / Path(name).name
+
+
+@app.put("/api/assets/{owner}/{kind}")
+async def upload_asset(owner: str, kind: str, name: str, request: Request):
+    stem, ext = Path(name).stem, Path(name).suffix.lower()
+    target = asset_path(owner, kind, slug(stem, "file") + ext)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with open(target, "wb") as f:
+        async for chunk in request.stream():
+            f.write(chunk)
+    return {"name": target.name}
+
+
+@app.get("/assets/{owner}/{kind}/{name}")
+def get_asset(owner: str, kind: str, name: str):
+    path = asset_path(owner, kind, name)
+    if not path.exists():
+        raise HTTPException(404, "Файл не найден")
+    return FileResponse(path)
+
+
+@app.delete("/api/assets/{owner}/{kind}/{name}")
+def delete_asset(owner: str, kind: str, name: str):
+    path = asset_path(owner, kind, name)
+    if not path.exists():
+        raise HTTPException(404, "Файл не найден")
+    path.unlink()
+    return {"ok": True}
+
+
+# ---------- формат «ТОП N» ----------
+
+class TopReq(BaseModel):
+    project: str
+    moments: list[int]
+    title: str
+    preset: Preset
+    photo: str = ""  # имя файла из фото стримера
+
+
+def top_job(pid: str, req: TopReq) -> None:
+    p = state["projects"][pid]
+    try:
+        moments = sorted((Moment.model_validate(p["moments"][i]) for i in req.moments), key=lambda m: -m.score)
+        owner = p.get("streamer") or "common"
+        photo = asset_path(owner, "photos", req.photo) if req.photo else None
+        fonts = ASSETS / owner / "fonts"
+        name = f"top_{slug(req.title)}_{uuid.uuid4().hex[:4]}.mp4"
+        render_top(Path(p["video"]), moments, req.title, req.preset, DATA / "clips" / pid / name,
+                   photo if photo and photo.exists() else None, fonts if fonts.is_dir() else None)
+        with lock:
+            p.setdefault("clips", []).insert(0, {
+                "file": name, "title": req.title, "caption": "", "hashtags": [], "kind": "top",
+                "score": max(m.score for m in moments), "profanity": any(m.profanity for m in moments),
+                "preset": req.preset.name, "start": moments[-1].start, "end": moments[-1].end,
+                "speed": 1.0, "created": time.time()})
+        set_status(p, "ready", f"Топ из {len(moments)} моментов готов")
+    except Exception as exc:
+        traceback.print_exc()
+        set_status(p, "error", str(exc)[:500])
+
+
+@app.post("/api/top")
+def make_top(req: TopReq):
+    p = project(req.project)
+    if p["status"] not in ("ready", "error") or not p.get("video"):
+        raise HTTPException(409, "Проект занят — дождитесь окончания текущей задачи")
+    if not 2 <= len(req.moments) <= 10 or any(not 0 <= i < len(p["moments"]) for i in req.moments):
+        raise HTTPException(400, "Отметьте от 2 до 10 моментов")
+    if not req.title.strip():
+        raise HTTPException(400, "Введите заголовок топа")
+    set_status(p, "render", "Собираю топ…")
+    threading.Thread(target=top_job, args=(req.project, req), daemon=True).start()
+    return {"ok": True}
+
+
+# ---------- ролики-примеры ----------
+
+class RefReq(BaseModel):
+    source: str
+    name: str
+
+
+def reference_job(rid: str, source: str) -> None:
+    r = state["references"][rid]
+    try:
+        video = fetch(source, DATA / "downloads")
+        result = analyze_reference(video, rid, PRESETS, DATA / "references")
+        with lock:
+            r.update(result, status="ready", message="Пресет сохранён")
+    except Exception as exc:
+        traceback.print_exc()
+        with lock:
+            r.update(status="error", message=str(exc)[:500])
+    save_state()
+
+
+@app.post("/api/references")
+def new_reference(req: RefReq):
+    rid = slug(req.name, "primer")
+    with lock:
+        state["references"][rid] = {"name": rid, "source": req.source.strip(), "status": "work",
+                                    "message": "Разбираю стиль…", "created": time.time()}
+    save_state()
+    threading.Thread(target=reference_job, args=(rid, req.source.strip()), daemon=True).start()
+    return {"name": rid}
+
+
+@app.get("/references/{name}")
+def reference_sheet(name: str):
+    path = DATA / "references" / Path(name).name
+    if not path.exists():
+        raise HTTPException(404, "Нет раскадровки")
+    return FileResponse(path)
 
 
 class CapcutReq(BaseModel):

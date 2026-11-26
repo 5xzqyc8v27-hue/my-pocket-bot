@@ -64,12 +64,19 @@ input[type=color]{width:100%;height:30px;padding:0;border:1px solid var(--line);
 .check{display:flex;align-items:center;gap:6px;margin-bottom:8px}
 .check input{accent-color:var(--accent)}
 .empty{color:var(--mute);padding:30px;text-align:center}
+.assets{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
+.asset{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12px;word-break:break-all}
+.asset img{width:100%;height:90px;object-fit:contain;display:block;margin-bottom:6px}
+.ref{display:grid;grid-template-columns:260px 1fr;gap:14px;margin-bottom:14px}
+.ref img{width:100%;border-radius:8px}
+@media(max-width:800px){.ref{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <div class="app">
   <aside>
     <div class="logo"><i></i><h1>Clipper</h1></div>
+    <div class="tabs" id="nav" style="margin:0"></div>
     <div class="card">
       <h2>Новый исходник</h2>
       <div class="field"><label>Ссылка или путь к файлу</label><input type="text" id="src" placeholder="https://… или /Users/…/video.mp4"></div>
@@ -82,6 +89,7 @@ input[type=color]{width:100%;height:30px;padding:0;border:1px solid var(--line);
       <div class="field"><label>Кто выбирает моменты</label><select id="picker"></select></div>
       <div class="field"><label>Распознавание речи</label>
         <select id="whisper"><option value="small">Быстрое (small)</option><option value="medium">Точнее (medium)</option><option value="large-v3">Лучшее (large-v3)</option><option value="off">Выключить</option></select></div>
+      <div class="field"><label>Стример (для его материалов)</label><input type="text" id="streamer" list="owners" placeholder="например evelone"><datalist id="owners"></datalist></div>
       <div class="field"><label>Залипалка для сплита (путь, необязательно)</label><input type="text" id="filler" placeholder="/Users/…/loop.mp4"></div>
       <button class="btn primary" id="add" style="width:100%">Найти моменты</button>
     </div>
@@ -161,7 +169,8 @@ const SUB_STYLES = {
   'По слову': {subtitle_color: 'FFE600', subtitle_highlight: 'FFFFFF', subtitle_upper: true, subtitle_words: 1, subtitle_size: 100},
   'Спокойные': {subtitle_color: 'E8EAED', subtitle_highlight: 'FF8AD8', subtitle_upper: false, subtitle_words: 4, subtitle_size: 58},
 };
-let S = {projects: {}, presets: [], pickers: []}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
+let view = 'Проект', owner = 'common', kind = 'photos';
+let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
 
 const getP = k => k.includes('.') ? preset[k.split('.')[0]][+k.split('.')[1]] : preset[k];
 function setP(k, v) { if (k.includes('.')) { const [a, i] = k.split('.'); preset[a][+i] = v; } else preset[k] = v; queuePreview(); }
@@ -194,8 +203,8 @@ function renderProjects() {
   const box = $('#projects'); box.replaceChildren();
   const list = Object.values(S.projects).sort((a, b) => b.created - a.created);
   if (!list.length) box.append(h('div', {class: 'mute'}, 'Пока пусто'));
-  for (const p of list) box.append(h('div', {class: 'proj' + (p.id === cur ? ' active' : ''), onclick: () => { cur = p.id; mom = 0; picked = new Set(); renderAll(); }},
-    h('b', {}, p.title), h('small', {}, STATUS[p.status] || p.status, ' · моментов ', p.moments.length, ' · роликов ', (p.clips || []).length)));
+  for (const p of list) box.append(h('div', {class: 'proj' + (p.id === cur ? ' active' : ''), onclick: () => { cur = p.id; mom = 0; picked = new Set(); view = 'Проект'; renderAll(); }},
+    h('b', {}, p.title), h('small', {}, p.streamer && p.streamer !== 'common' ? p.streamer + ' · ' : '', STATUS[p.status] || p.status, ' · моментов ', p.moments.length, ' · роликов ', (p.clips || []).length)));
 }
 
 function momentCard(p, m, i) {
@@ -217,7 +226,44 @@ function momentCard(p, m, i) {
 
 function updateRenderBtn() { const b = $('#renderBtn'); if (b) { b.textContent = picked.size ? `Смонтировать выбранные (${picked.size})` : 'Смонтировать все'; } }
 
+function renderAssets() {
+  const owners = Object.keys(S.assets); if (!owners.includes(owner)) owners.push(owner);
+  const files = (S.assets[owner] || {})[kind] || [];
+  const isImg = n => /\.(png|jpe?g|webp|gif)$/i.test(n);
+  $('#main').replaceChildren(
+    h('div', {}, h('h1', {}, 'Материалы'), h('div', {class: 'mute'}, 'Свои файлы: общие и отдельно под каждого стримера. Фото идут в топы, шрифты — в титры топов.')),
+    h('div', {class: 'card'},
+      h('div', {class: 'row', style: 'margin-bottom:12px'},
+        h('div', {class: 'field', style: 'margin:0'}, h('label', {}, 'Чьи материалы'), h('select', {onchange: e => { owner = e.target.value; renderAssets(); }}, owners.map(o => h('option', {value: o, selected: o === owner}, o === 'common' ? 'Общие' : o)))),
+        h('div', {class: 'field', style: 'margin:0'}, h('label', {}, 'Новый стример'), h('input', {type: 'text', placeholder: 'ник латиницей', onchange: e => { if (e.target.value.trim()) { owner = e.target.value.trim().toLowerCase(); renderAssets(); } }}))),
+      h('div', {class: 'tabs'}, Object.entries(S.kinds).map(([k, name]) => h('button', {class: 'tab' + (k === kind ? ' active' : ''), onclick: () => { kind = k; renderAssets(); }}, name, ' ', ((S.assets[owner] || {})[k] || []).length || ''))),
+      h('div', {class: 'field'}, h('label', {}, 'Загрузить файлы (можно несколько)'), h('input', {type: 'file', multiple: true, onchange: async e => {
+        for (const f of e.target.files) await fetch(`/api/assets/${encodeURIComponent(owner)}/${kind}?name=` + encodeURIComponent(f.name), {method: 'PUT', body: f});
+        await refresh(true); }})),
+      files.length ? h('div', {class: 'assets'}, files.map(n => h('div', {class: 'asset'},
+        isImg(n) && h('img', {src: `/assets/${owner}/${kind}/${encodeURIComponent(n)}`, alt: ''}), n,
+        h('button', {class: 'btn small', style: 'display:block;margin-top:6px', onclick: async () => { if (confirm('Удалить файл ' + n + '?')) { await api(`/api/assets/${owner}/${kind}/${encodeURIComponent(n)}`, 'DELETE'); refresh(true); } }}, 'Удалить')))) : h('div', {class: 'mute'}, 'Здесь пока пусто.')));
+}
+
+function renderRefs() {
+  const refs = Object.values(S.references).sort((a, b) => b.created - a.created);
+  let src, name;
+  $('#main').replaceChildren(
+    h('div', {}, h('h1', {}, 'Примеры'), h('div', {class: 'mute'}, 'Дайте ролик конкурента — Claude разберёт его стиль, опишет приёмы и сохранит пресет с таким оформлением.')),
+    h('div', {class: 'card'}, h('div', {class: 'row'},
+      src = h('input', {type: 'text', placeholder: 'Ссылка или путь к ролику-примеру'}),
+      name = h('input', {type: 'text', placeholder: 'Название стиля', style: 'flex:0 0 200px'}),
+      h('button', {class: 'btn primary', style: 'flex:none', onclick: async () => { try { if (!src.value.trim() || !name.value.trim()) throw new Error('Укажите ролик и название стиля'); await api('/api/references', 'POST', {source: src.value, name: name.value}); refresh(true); } catch (e) { alert(e.message); } }}, 'Разобрать'))),
+    ...(refs.length ? refs.map(r => h('div', {class: 'card ref'},
+      r.sheet ? h('img', {src: '/references/' + encodeURIComponent(r.sheet), alt: 'Раскадровка примера'}) : h('div', {class: 'mute'}, r.message),
+      h('div', {}, h('h2', {}, r.name), r.status === 'ready' ? [
+        h('div', {style: 'margin-bottom:8px'}, h('span', {class: 'pill good'}, r.format === 'top' ? 'формат: топ N' : 'формат: один момент'), ' ', h('span', {class: 'mute'}, `${Math.round(r.duration)} с · склеек ${r.cuts} · пресет «${r.name}» сохранён`)),
+        h('div', {}, r.notes)] : h('div', {class: r.status === 'error' ? 'status error' : 'mute'}, r.message)))) : [h('div', {class: 'empty'}, 'Примеров пока нет.')]));
+}
+
 function renderMain() {
+  if (view === 'Материалы') return renderAssets();
+  if (view === 'Примеры') return renderRefs();
   const main = $('#main'), p = S.projects[cur];
   if (!p) { main.replaceChildren(h('div', {class: 'empty'}, 'Добавьте исходник слева — ссылку или файл.')); return; }
   const busy = !['ready', 'error'].includes(p.status);
@@ -260,19 +306,29 @@ function renderMain() {
         h('a', {class: 'btn small', href: `/clips/${p.id}/${encodeURIComponent(c.file)}`, download: c.file, style: 'text-align:center;text-decoration:none'}, 'Скачать'),
         h('button', {class: 'btn small', onclick: async () => { if (confirm('Удалить ролик с диска?')) { await api(`/api/clips/${p.id}/${encodeURIComponent(c.file)}`, 'DELETE'); refresh(); } }}, 'Удалить'))))) : h('div', {class: 'mute'}, 'Пока нет — выберите моменты и нажмите «Смонтировать».'));
 
-  main.replaceChildren(head, status, h('div', {class: 'work'}, moments, editor, pv), clips);
+  const photos = ((S.assets[p.streamer] || {}).photos || []);
+  let topTitle, topPhoto;
+  const top = h('div', {class: 'card'}, h('h2', {}, 'Подборка «ТОП N»'),
+    h('div', {class: 'mute', style: 'margin-bottom:8px'}, 'Отметьте 2–10 моментов галочками. Названия моментов станут пунктами списка, лучший по оценке покажется последним.'),
+    h('div', {class: 'row'},
+      topTitle = h('input', {type: 'text', placeholder: 'Заголовок, например: Топ 5 смешных моментов в GTA', value: p.topTitle || '', oninput: e => { p.topTitle = e.target.value; }}),
+      topPhoto = h('select', {style: 'flex:0 0 200px', title: 'Фото внизу кадра — из материалов стримера'}, h('option', {value: ''}, photos.length ? 'Без фото' : 'Фото: загрузите в «Материалы»'), photos.map(n => h('option', {value: n}, n))),
+      h('button', {class: 'btn primary', style: 'flex:none', disabled: busy, onclick: async () => { try { await api('/api/top', 'POST', {project: p.id, moments: [...picked], title: topTitle.value, preset, photo: topPhoto.value}); refresh(true); } catch (e) { alert(e.message); } }}, 'Собрать топ')));
+  main.replaceChildren(head, status, h('div', {class: 'work'}, moments, editor, pv), top, clips);
   updateRenderBtn(); queuePreview();
 }
 
-function renderAll() { renderProjects(); renderMain(); }
+function renderNav() { $('#nav').replaceChildren(...['Проект', 'Материалы', 'Примеры'].map(v => h('button', {class: 'tab' + (v === view ? ' active' : ''), onclick: () => { view = v; renderAll(); }}, v)));
+  $('#owners').replaceChildren(...Object.keys(S.assets).filter(o => o !== 'common').map(o => h('option', {value: o}))); }
+function renderAll() { renderNav(); renderProjects(); renderMain(); }
 let lastSig = '';
-async function refresh() {
+async function refresh(force) {
   S = await (await api('/api/state')).json();
   if (!preset) preset = structuredClone(S.presets[0] || S.defaults);
   if (!$('#picker').options.length) $('#picker').append(...['auto', ...S.pickers].map(k => h('option', {value: k}, PICKERS[k] || k)));
   if (!cur || !S.projects[cur]) cur = Object.values(S.projects).sort((a, b) => b.created - a.created)[0]?.id || null;
-  const sig = JSON.stringify([S.projects, S.presets.map(p => p.name), cur]);
-  if (sig !== lastSig && !document.activeElement.matches('main input, main select')) { lastSig = sig; renderAll(); }
+  const sig = JSON.stringify([S.projects, S.presets.map(p => p.name), cur, S.assets, S.references]);
+  if (force || sig !== lastSig && !document.activeElement.matches('main input, main select')) { lastSig = sig; renderAll(); }
 }
 $('#add').onclick = async () => {
   const btn = $('#add'); btn.disabled = true;
@@ -280,7 +336,7 @@ $('#add').onclick = async () => {
     let source = $('#src').value.trim(); const f = $('#file').files[0];
     if (f) { btn.textContent = 'Загружаю файл…'; source = (await (await fetch('/api/upload?name=' + encodeURIComponent(f.name), {method: 'PUT', body: f})).json()).path; }
     if (!source) throw new Error('Укажите ссылку, путь или выберите файл');
-    const r = await (await api('/api/projects', 'POST', {source, picker: $('#picker').value, count: +$('#count').value, min: +$('#min').value, max: +$('#max').value, whisper: $('#whisper').value, filler: $('#filler').value})).json();
+    const r = await (await api('/api/projects', 'POST', {source, picker: $('#picker').value, count: +$('#count').value, min: +$('#min').value, max: +$('#max').value, whisper: $('#whisper').value, filler: $('#filler').value, streamer: $('#streamer').value})).json();
     cur = r.id; mom = 0; picked = new Set(); $('#src').value = ''; $('#file').value = ''; await refresh();
   } catch (e) { alert(e.message); }
   btn.disabled = false; btn.textContent = 'Найти моменты';

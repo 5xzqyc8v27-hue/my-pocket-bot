@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import random
+import shutil
 import re
 import threading
 import time
@@ -21,6 +22,7 @@ from .models import Moment, Preset, Transcript
 from .moments import available_pickers, pick
 from .reference import analyze_reference
 from .render import render_clip, render_frame
+from .streams import StreamManager
 from .top import render_top
 from .variety import vary
 
@@ -32,7 +34,7 @@ WEB = Path(__file__).resolve().parent / "web"
 
 app = FastAPI(title="Clipper")
 lock = threading.RLock()
-state: dict = {"projects": {}, "references": {}}
+state: dict = {"projects": {}, "references": {}, "streamers": {}}
 ASSETS = DATA / "assets"
 KINDS = {"photos": "Фото и вырезки", "emoji": "Эмодзи и стикеры", "fonts": "Шрифты", "sounds": "Звуки",
          "banners": "Баннеры", "fillers": "Залипалки", "templates": "Шаблоны"}
@@ -41,8 +43,13 @@ KINDS = {"photos": "Фото и вырезки", "emoji": "Эмодзи и ст�
 def load_state() -> None:
     DATA.mkdir(exist_ok=True)
     if STATE_FILE.exists():
-        state.update(json.loads(STATE_FILE.read_text(encoding="utf-8")))
+        loaded = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        streamers = loaded.pop("streamers", {})
+        state.update(loaded)
+        state["streamers"].update(streamers)  # тот же словарь, за которым следит менеджер эфиров
     state.setdefault("references", {})
+    for st in state["streamers"].values():
+        st.update(recording=False, live=False, working="", last_check=0)
     for r in state["references"].values():
         if r["status"] == "work":
             r["status"], r["message"] = "error", "Прервано перезапуском панели"
@@ -190,7 +197,8 @@ def get_state():
     with lock:
         return {"projects": state["projects"], "presets": presets, "pickers": available_pickers(),
                 "defaults": Preset().model_dump(), "references": state["references"],
-                "assets": list_assets(), "kinds": KINDS}
+                "assets": list_assets(), "kinds": KINDS, "streamers": state["streamers"],
+                "disk_free_gb": round(shutil.disk_usage(DATA).free / 1e9, 1)}
 
 
 @app.get("/api/health")
@@ -207,6 +215,8 @@ def health():
 
     checks = [
         ("ffmpeg", "Монтаж видео", shutil.which("ffmpeg") is not None, True, "brew install ffmpeg"),
+        ("streamlink", "Запись эфиров Twitch и Kick", shutil.which("streamlink") is not None, False,
+         "pip install streamlink"),
         ("yt-dlp", "Скачивание по ссылкам", shutil.which("yt-dlp") is not None, False, "pip install yt-dlp"),
         ("faster-whisper", "Распознавание речи: субтитры и выбор по смыслу", lib("faster_whisper"), False,
          "pip install faster-whisper (модель скачается сама при первом запуске)"),
@@ -325,6 +335,105 @@ def render(req: RenderReq):
         raise HTTPException(400, "Выберите моменты для монтажа")
     set_status(p, "render", "Запускаю монтаж…")
     threading.Thread(target=render_job, args=(req.project, req.moments, req.preset, req.vary), daemon=True).start()
+    return {"ok": True}
+
+
+# ---------- стримеры: эфир -> монтаж ----------
+
+class StreamerReq(BaseModel):
+    name: str
+    platform: str = "twitch"  # twitch, kick или file (готовая запись эфира)
+    channel: str
+    enabled: bool = True
+    montage: bool = True
+    preset: str = "reaction"
+    focus: str = ""
+    picker: str = "auto"
+    per_chunk: int = 4
+    min_score: int = 60
+    skip_profanity: bool = False
+    chunk_minutes: float = 10
+    delete_chunks: bool = False
+    whisper: str = "small"
+
+
+def process_chunk(st: dict, chunk: Path) -> int:
+    """Один записанный кусок эфира: найти моменты и смонтировать лучшие."""
+    pid = uuid.uuid4().hex[:8]
+    with lock:
+        state["projects"][pid] = {"id": pid, "source": str(chunk), "title": chunk.stem, "status": "queued",
+                                  "message": "В очереди", "moments": [], "clips": [], "filler": "",
+                                  "streamer": st["id"], "auto": True, "created": time.time()}
+    analyze_job(pid, {"picker": st["picker"], "count": st["per_chunk"], "min": 15, "max": 60,
+                      "whisper": st["whisper"], "lang": "ru", "focus": st["focus"]})
+    p = state["projects"][pid]
+    if p["status"] == "error":
+        raise RuntimeError(p["message"])
+    good = [i for i, m in enumerate(p["moments"])
+            if m["score"] >= st["min_score"] and not (st["skip_profanity"] and m["profanity"])]
+    if not good:
+        set_status(p, "ready", "Сильных моментов в этом куске нет")
+        return 0
+    preset = Preset.load(st["preset"], PRESETS)
+    if not preset.watermark:
+        preset.watermark = ""
+    render_job(pid, good, preset, varied=len(good) > 1)
+    if p["status"] == "error":
+        raise RuntimeError(p["message"])
+    return len(good)
+
+
+manager = StreamManager(state["streamers"], DATA / "recordings", lock, lambda: save_state(), process_chunk)
+
+
+@app.post("/api/streamers")
+def save_streamer(req: StreamerReq):
+    if req.platform not in ("twitch", "kick", "file"):
+        raise HTTPException(400, "Площадка: twitch, kick или file")
+    channel = req.channel.strip()
+    if req.platform != "file":
+        channel = channel.rstrip("/").split("/")[-1].lower()  # принимаем и ссылку, и ник
+        if not re.fullmatch(r"[a-z0-9_\-]{2,40}", channel):
+            raise HTTPException(400, "Укажите ник канала или ссылку на него")
+    sid = slug(req.name, "streamer")
+    with lock:
+        old = state["streamers"].get(sid, {})
+        state["streamers"][sid] = {**old, **req.model_dump(), "id": sid, "channel": channel,
+                                   "created": old.get("created", time.time())}
+    manager.force.add(sid)
+    save_state()
+    return {"id": sid}
+
+
+@app.patch("/api/streamers/{sid}")
+def patch_streamer(sid: str, changes: dict):
+    st = state["streamers"].get(sid)
+    if not st:
+        raise HTTPException(404, "Стример не найден")
+    allowed = set(StreamerReq.model_fields) - {"name", "platform", "channel"}
+    with lock:
+        st.update({k: v for k, v in changes.items() if k in allowed})
+    manager.force.add(sid)
+    save_state()
+    return st
+
+
+@app.post("/api/streamers/{sid}/check")
+def check_streamer(sid: str):
+    if sid not in state["streamers"]:
+        raise HTTPException(404, "Стример не найден")
+    manager.force.add(sid)
+    return {"ok": True}
+
+
+@app.delete("/api/streamers/{sid}")
+def delete_streamer(sid: str):
+    if sid not in state["streamers"]:
+        raise HTTPException(404, "Стример не найден")
+    manager.stop(sid)
+    with lock:
+        del state["streamers"][sid]
+    save_state()
     return {"ok": True}
 
 
@@ -531,6 +640,7 @@ async def on_error(_: Request, exc: Exception):
 def main() -> None:
     import uvicorn
     load_state()
+    manager.start()
     print("Панель: http://127.0.0.1:8765")
     uvicorn.run(app, host="127.0.0.1", port=8765, log_level="warning")
 

@@ -64,6 +64,16 @@ input[type=color]{width:100%;height:30px;padding:0;border:1px solid var(--line);
 .check{display:flex;align-items:center;gap:6px;margin-bottom:8px}
 .check input{accent-color:var(--accent)}
 .empty{color:var(--mute);padding:30px;text-align:center}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.tile b{font-size:26px;display:block}
+.stages{display:grid;grid-template-columns:repeat(4,minmax(200px,1fr));gap:12px}
+@media(max-width:1200px){.stages{grid-template-columns:1fr 1fr}}
+@media(max-width:700px){.stages{grid-template-columns:1fr}}
+.stage{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px}
+.stage h3{margin:0 0 8px;font-size:14px;display:flex;justify-content:space-between;align-items:center}
+.kv{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:2px 0}
+.kv span:first-child{color:var(--mute)}
+.kv span:last-child{text-align:right;overflow:hidden;text-overflow:ellipsis}
 .assets{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
 .asset{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12px;word-break:break-all}
 .asset img{width:100%;height:90px;object-fit:contain;display:block;margin-bottom:6px}
@@ -175,7 +185,7 @@ const SUB_STYLES = {
 };
 let catFilter = '', varyOn = true, health = null;
 let view = 'Проект', owner = 'common', kind = 'photos';
-let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
+let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
 
 const getP = k => k.includes('.') ? preset[k.split('.')[0]][+k.split('.')[1]] : preset[k];
 function setP(k, v) { if (k.includes('.')) { const [a, i] = k.split('.'); preset[a][+i] = v; } else preset[k] = v; queuePreview(); }
@@ -267,6 +277,59 @@ function renderRefs() {
         h('div', {}, r.notes)] : h('div', {class: r.status === 'error' ? 'status error' : 'mute'}, r.message)))) : [h('div', {class: 'empty'}, 'Примеров пока нет.')]));
 }
 
+const ago = t => { if (!t) return '—'; const d = Math.max(0, Date.now() / 1000 - t); return d < 90 ? Math.round(d) + ' с назад' : d < 5400 ? Math.round(d / 60) + ' мин назад' : Math.round(d / 3600) + ' ч назад'; };
+function streamerCard(st) {
+  const patch = body => api('/api/streamers/' + st.id, 'PATCH', body).then(() => refresh(true)).catch(e => alert(e.message));
+  const toggle = (key, title) => h('input', {type: 'checkbox', checked: !!st[key], title, onchange: e => patch({[key]: e.target.checked})});
+  const kv = (k, v) => h('div', {class: 'kv'}, h('span', {}, k), h('span', {}, v));
+  const projects = Object.values(S.projects).filter(p => p.streamer === st.id);
+  const clips = projects.reduce((n, p) => n + (p.clips || []).length, 0);
+  const where = {twitch: 'Twitch', kick: 'Kick', file: 'запись'}[st.platform];
+  return h('div', {class: 'card'},
+    h('div', {class: 'row', style: 'margin-bottom:12px'},
+      h('div', {}, h('h1', {}, st.name, ' ', h('span', {class: 'pill'}, where + ' · ' + (st.platform === 'file' ? st.channel.split('/').pop() : st.channel)), ' ', st.live && h('span', {class: 'pill good'}, 'в эфире'))),
+      h('div', {style: 'flex:none'}, h('button', {class: 'btn small', onclick: () => api(`/api/streamers/${st.id}/check`, 'POST').then(() => setTimeout(() => refresh(true), 1500))}, 'Проверить эфир'), ' ',
+        h('button', {class: 'btn small', onclick: async () => { if (confirm('Удалить стримера ' + st.name + '? Записи и ролики останутся на диске.')) { await api('/api/streamers/' + st.id, 'DELETE'); refresh(true); } }}, 'Удалить'))),
+    h('div', {class: 'stages'},
+      h('div', {class: 'stage'}, h('h3', {}, '1 · Эфир', toggle('enabled', 'Следить за эфиром и записывать')),
+        h('div', {style: 'margin-bottom:6px'}, h('span', {class: 'pill ' + (st.recording ? 'good' : '')}, st.recording ? 'пишет эфир' : st.enabled ? 'ждёт эфира' : 'выключен')),
+        kv('состояние', st.message || '—'), kv('в эфире с', st.recording ? ago(st.live_since) : '—'), kv('последний кусок', st.last_chunk || '—'), kv('проверка', ago(st.last_check)),
+        h('div', {class: 'field', style: 'margin-top:8px'}, h('label', {}, 'Длина куска, мин'), h('input', {type: 'number', min: 0.5, step: 0.5, value: st.chunk_minutes, onchange: e => patch({chunk_minutes: +e.target.value})}))),
+      h('div', {class: 'stage'}, h('h3', {}, '2 · Монтаж', toggle('montage', 'Автоматически искать моменты и монтировать')),
+        h('div', {style: 'margin-bottom:6px'}, h('span', {class: 'pill ' + (st.working ? 'good' : '')}, st.working ? 'идёт монтаж' : st.montage ? 'ждёт кусок' : 'выключен')),
+        kv('роликов всего', clips), kv('кусков просмотрено', st.chunks_done || 0), kv('последний ролик', ago(st.last_clip)), kv('состояние', st.montage_message || '—'),
+        h('div', {class: 'field', style: 'margin-top:8px'}, h('label', {}, 'Пресет'), h('select', {onchange: e => patch({preset: e.target.value})}, S.presets.map(x => h('option', {value: x.name, selected: x.name === st.preset}, x.name)))),
+        h('div', {class: 'row'},
+          h('div', {class: 'field'}, h('label', {}, 'Роликов с куска'), h('input', {type: 'number', min: 1, max: 15, value: st.per_chunk, onchange: e => patch({per_chunk: +e.target.value})})),
+          h('div', {class: 'field'}, h('label', {}, 'Оценка от'), h('input', {type: 'number', min: 0, max: 100, value: st.min_score, onchange: e => patch({min_score: +e.target.value})}))),
+        h('label', {class: 'check'}, toggle('skip_profanity', ''), 'Пропускать моменты с матом')),
+      h('div', {class: 'stage'}, h('h3', {}, '3 · Публикация'), h('div', {style: 'margin-bottom:6px'}, h('span', {class: 'pill'}, 'не подключена')),
+        h('div', {class: 'mute'}, 'Автовыкладка в TikTok, YouTube и Instagram по расписанию — следующий этап. Пока ролики забираются вручную из проекта.')),
+      h('div', {class: 'stage'}, h('h3', {}, '4 · Очистка', toggle('delete_chunks', 'Удалять записанный кусок эфира сразу после монтажа')),
+        h('div', {style: 'margin-bottom:6px'}, h('span', {class: 'pill ' + (st.delete_chunks ? 'good' : '')}, st.delete_chunks ? 'удаляет куски после монтажа' : 'выключена')),
+        kv('свободно на диске', S.disk_free_gb + ' ГБ'), h('div', {class: 'mute', style: 'margin-top:6px'}, 'Удаляются только исходные записи эфира. Готовые ролики не трогаются.'))),
+    projects.length ? h('div', {style: 'margin-top:12px'}, h('h2', {}, 'Куски эфира'), h('div', {class: 'hooks'}, projects.sort((a, b) => b.created - a.created).slice(0, 12).map(p => h('button', {class: 'btn small', onclick: () => { cur = p.id; mom = 0; picked = new Set(); view = 'Проект'; renderAll(); }}, p.title, ' · ', (p.clips || []).length, ' рол.')))) : null);
+}
+function renderStreamers() {
+  const list = Object.values(S.streamers).sort((a, b) => a.created - b.created);
+  const day = Date.now() / 1000 - 86400;
+  const clipsDay = Object.values(S.projects).reduce((n, p) => n + (p.clips || []).filter(c => c.created > day).length, 0);
+  let name, platform, channel;
+  $('#main').replaceChildren(
+    h('div', {}, h('h1', {}, 'Стримеры'), h('div', {class: 'mute'}, 'Добавьте канал — панель сама следит за эфиром, пишет его кусками, находит моменты и монтирует ролики.')),
+    h('div', {class: 'tiles'},
+      h('div', {class: 'card tile'}, h('div', {class: 'mute'}, 'Роликов за сутки'), h('b', {}, clipsDay)),
+      h('div', {class: 'card tile'}, h('div', {class: 'mute'}, 'В эфире'), h('b', {}, list.filter(x => x.live).length + ' из ' + list.length)),
+      h('div', {class: 'card tile'}, h('div', {class: 'mute'}, 'Идёт монтаж'), h('b', {}, list.filter(x => x.working).length)),
+      h('div', {class: 'card tile'}, h('div', {class: 'mute'}, 'Свободно на диске'), h('b', {}, S.disk_free_gb + ' ГБ'))),
+    h('div', {class: 'card'}, h('h2', {}, 'Добавить стримера'), h('div', {class: 'row'},
+      name = h('input', {type: 'text', placeholder: 'Имя, например Evelone'}),
+      platform = h('select', {style: 'flex:0 0 190px'}, h('option', {value: 'twitch'}, 'Twitch'), h('option', {value: 'kick'}, 'Kick'), h('option', {value: 'file'}, 'Готовая запись эфира')),
+      channel = h('input', {type: 'text', placeholder: 'Ник канала, ссылка или путь к файлу записи'}),
+      h('button', {class: 'btn primary', style: 'flex:none', onclick: async () => { try { await api('/api/streamers', 'POST', {name: name.value, platform: platform.value, channel: channel.value}); refresh(true); } catch (e) { alert(e.message); } }}, 'Добавить'))),
+    ...(list.length ? list.map(streamerCard) : [h('div', {class: 'empty'}, 'Стримеров пока нет.')]));
+}
+
 async function renderHealth() {
   if (!health) { $('#main').replaceChildren(h('div', {class: 'empty'}, 'Проверяю…')); health = await (await api('/api/health')).json(); if (view !== 'Настройка') return; }
   $('#main').replaceChildren(
@@ -279,6 +342,7 @@ async function renderHealth() {
 
 function renderMain() {
   if (view === 'Настройка') return renderHealth();
+  if (view === 'Стримеры') return renderStreamers();
   if (view === 'Материалы') return renderAssets();
   if (view === 'Примеры') return renderRefs();
   const main = $('#main'), p = S.projects[cur];
@@ -339,7 +403,7 @@ function renderMain() {
   updateRenderBtn(); queuePreview();
 }
 
-function renderNav() { $('#nav').replaceChildren(...['Проект', 'Материалы', 'Примеры', 'Настройка'].map(v => h('button', {class: 'tab' + (v === view ? ' active' : ''), onclick: () => { view = v; renderAll(); }}, v)));
+function renderNav() { $('#nav').replaceChildren(...['Стримеры', 'Проект', 'Материалы', 'Примеры', 'Настройка'].map(v => h('button', {class: 'tab' + (v === view ? ' active' : ''), onclick: () => { view = v; renderAll(); }}, v)));
   $('#owners').replaceChildren(...Object.keys(S.assets).filter(o => o !== 'common').map(o => h('option', {value: o}))); }
 function renderAll() { renderNav(); renderProjects(); renderMain(); }
 let lastSig = '';
@@ -348,7 +412,7 @@ async function refresh(force) {
   if (!preset) preset = structuredClone(S.presets[0] || S.defaults);
   if (!$('#picker').options.length) $('#picker').append(...['auto', ...S.pickers].map(k => h('option', {value: k}, PICKERS[k] || k)));
   if (!cur || !S.projects[cur]) cur = Object.values(S.projects).sort((a, b) => b.created - a.created)[0]?.id || null;
-  const sig = JSON.stringify([S.projects, S.presets.map(p => p.name), cur, S.assets, S.references]);
+  const sig = JSON.stringify([S.projects, S.presets.map(p => p.name), cur, S.assets, S.references, Object.values(S.streamers).map(x => ({...x, last_check: 0}))]);
   if (force || sig !== lastSig && !document.activeElement.matches('main input, main select')) { lastSig = sig; renderAll(); }
 }
 $('#add').onclick = async () => {

@@ -84,7 +84,7 @@ def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcrip
         banner = None
     words = transcript.words_between(moment.start, moment.end) if transcript else []
     ass_name = None
-    if (preset.subtitles and words) or (preset.title and moment.title.strip()):
+    if (preset.subtitles and words) or (preset.title and moment.title.strip()) or preset.watermark.strip():
         ass_name = "subs.ass"
         (tmp / ass_name).write_text(
             build_ass(words, moment.start, moment.duration / preset.speed, moment.title, preset),
@@ -121,6 +121,8 @@ def render_frame(source: Path, moment: Moment, preset: Preset, out_path: Path,
     out_path.parent.mkdir(parents=True, exist_ok=True)
     # Прыгаем сразу к нужному месту исходника, чтобы не декодировать весь отрезок.
     shifted = moment.model_copy(update={"start": moment.start + max(0.0, min(0.98, at)) * moment.duration})
+    # Кадр берётся в нулевой момент — анимации появления в нём ещё не видно, отключаем их.
+    preset = preset.model_copy(update={"title_anim": False, "subtitle_pop": False})
     with tempfile.TemporaryDirectory() as tmp:
         cmd = _prepare(source, shifted, preset, transcript, filler, Path(tmp))
         idx = cmd.index("-filter_complex") + 1

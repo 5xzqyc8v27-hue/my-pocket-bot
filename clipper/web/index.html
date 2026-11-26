@@ -126,6 +126,8 @@ const TABS = {
     ['title_size', 'Размер', 'range', [30, 120, 1]],
     ['title_y', 'Положение по высоте', 'range', [0.03, 0.95, 0.01]],
     ['title_color', 'Цвет', 'color'],
+    ['title_glow', 'Неоновое свечение (цвет RRGGBB, пусто — без него)', 'text'],
+    ['title_anim', 'Появление с увеличением', 'bool'],
   ],
   'Субтитры': [
     ['subtitles', 'Показывать субтитры', 'bool'],
@@ -133,6 +135,7 @@ const TABS = {
     ['subtitle_y', 'Положение по высоте', 'range', [0.05, 0.97, 0.01]],
     ['subtitle_words', 'Слов на экране', 'range', [1, 6, 1]],
     ['subtitle_upper', 'ЗАГЛАВНЫМИ', 'bool'],
+    ['subtitle_pop', 'Слова «выпрыгивают»', 'bool'],
     ['subtitle_color', 'Цвет текста', 'color'],
     ['subtitle_highlight', 'Цвет текущего слова', 'color'],
     ['font', 'Шрифт (имя в системе)', 'text'],
@@ -145,6 +148,8 @@ const TABS = {
     ['saturation', 'Насыщенность', 'range', [0.6, 1.6, 0.01]],
     ['border', 'Рамка, пикс.', 'range', [0, 30, 1]],
     ['border_color', 'Цвет рамки', 'color'],
+    ['watermark', 'Ник поверх кадра', 'text'],
+    ['watermark_y', 'Ник: положение по высоте', 'range', [0.05, 0.97, 0.01]],
     ['banner', 'Баннер или водяной знак (путь к png)', 'text'],
     ['banner_y', 'Баннер: положение по высоте', 'range', [0.05, 0.95, 0.01]],
     ['banner_width', 'Баннер: ширина', 'range', [0.1, 1, 0.01]],
@@ -168,7 +173,7 @@ function control([key, label, type, opt]) {
   if (type === 'select') { input = h('select', {onchange: e => setP(key, e.target.value)}, Object.entries(opt).map(([val, name]) => h('option', {value: val, selected: val === v}, name))); }
   else if (type === 'range') { input = h('input', {type: 'range', min: opt[0], max: opt[1], step: opt[2], value: v, oninput: e => { out.textContent = e.target.value; setP(key, +e.target.value); }}); }
   else if (type === 'color') { input = h('input', {type: 'color', value: '#' + v, oninput: e => setP(key, e.target.value.slice(1).toUpperCase())}); }
-  else { input = h('input', {type: 'text', value: v || '', onchange: e => setP(key, e.target.value.trim() || (key === 'banner' ? null : ''))}); }
+  else { input = h('input', {type: 'text', value: v || '', onchange: e => setP(key, e.target.value.trim() || (['banner', 'title_glow'].includes(key) ? null : ''))}); }
   return h('div', {class: 'field'}, h('label', {}, label, out), input);
 }
 
@@ -239,7 +244,10 @@ function renderMain() {
     h('div', {class: 'field', style: 'margin-top:8px'}, h('label', {}, 'Момент ролика'), h('input', {type: 'range', min: 0, max: 0.98, step: 0.02, value: at, oninput: e => { at = +e.target.value; queuePreview(); }})),
     h('button', {class: 'btn primary', id: 'renderBtn', style: 'width:100%', disabled: busy || !p.moments.length, onclick: async () => {
       const list = picked.size ? [...picked] : p.moments.map((_, i) => i);
-      try { await api('/api/render', 'POST', {project: p.id, moments: list, preset}); refresh(); } catch (e) { alert(e.message); } }}, 'Смонтировать все'));
+      try { await api('/api/render', 'POST', {project: p.id, moments: list, preset}); refresh(); } catch (e) { alert(e.message); } }}, 'Смонтировать все'),
+    h('button', {class: 'btn', style: 'width:100%;margin-top:8px', disabled: busy || !p.moments.length, title: 'Создать проект CapCut с этим моментом, хуком и субтитрами', onclick: async () => {
+      try { const r = await (await api('/api/capcut', 'POST', {project: p.id, moment: mom, preset})).json();
+        alert(r.capcut_found ? 'Черновик создан — откройте CapCut, он появится в списке проектов.' : 'CapCut на этом компьютере не найден. Черновик сохранён в папку:\n' + r.path); } catch (e) { alert(e.message); } }}, 'Открыть момент в CapCut'));
 
   const clips = h('div', {class: 'card'}, h('h2', {}, `Готовые ролики (${(p.clips || []).length})`),
     (p.clips || []).length ? h('div', {class: 'clips'}, p.clips.map(c => h('div', {class: 'clip'},

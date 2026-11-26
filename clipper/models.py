@@ -92,6 +92,8 @@ class Preset(BaseModel):
     title_size: int = 64
     title_color: str = "FFFFFF"
     title_y: float = 0.12
+    title_glow: str | None = None  # цвет неонового свечения, например A020F0
+    title_anim: bool = False  # появление с увеличением
     # субтитры
     subtitles: bool = True
     subtitle_size: int = 72
@@ -100,6 +102,9 @@ class Preset(BaseModel):
     subtitle_y: float = 0.72
     subtitle_words: int = 3
     subtitle_upper: bool = False
+    subtitle_pop: bool = False  # каждое слово «выпрыгивает»
+    watermark: str = ""  # ник мелким текстом поверх кадра
+    watermark_y: float = 0.86
     font: str = "Arial"
     # уникализация: видимые изменения картинки и темпа
     mirror: bool = False

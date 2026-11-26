@@ -53,11 +53,22 @@ def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
     if preset.title and title.strip():
         max_chars = max(8, int(w * 0.9 / (preset.title_size * 0.6)))
         wrapped = "\\N".join(textwrap.wrap(_escape(title.upper()), max_chars)[:3])
-        pos = f"{{\\pos({w // 2},{int(h * preset.title_y)})}}"
-        lines.append(f"Dialogue: 1,{ass_time(0)},{ass_time(clip_len)},Title,{pos}{wrapped}")
+        tags = f"\\pos({w // 2},{int(h * preset.title_y)})"
+        if preset.title_anim:
+            tags += "\\fad(200,0)\\fscx60\\fscy60\\t(0,250,\\fscx100\\fscy100)"
+        span = f"{ass_time(0)},{ass_time(clip_len)}"
+        if preset.title_glow:
+            glow = ass_color(preset.title_glow)
+            lines.append(f"Dialogue: 1,{span},Title,{{{tags}\\1c{glow}&\\3c{glow}&\\bord10\\blur14\\shad0}}{wrapped}")
+            tags += f"\\3c{glow}&\\bord2\\blur1\\shad0"
+        lines.append(f"Dialogue: 2,{span},Title,{{{tags}}}{wrapped}")
+    if preset.watermark.strip():
+        lines.append(f"Dialogue: 3,{ass_time(0)},{ass_time(clip_len)},Sub,"
+                     f"{{\\pos({w // 2},{int(h * preset.watermark_y)})\\fs30\\bord2\\alpha&H50&}}{_escape(preset.watermark)}")
 
     if preset.subtitles:
-        pos = f"{{\\pos({w // 2},{int(h * preset.subtitle_y)})}}"
+        pop = "\\fscx82\\fscy82\\t(0,90,\\fscx100\\fscy100)" if preset.subtitle_pop else ""
+        pos = f"{{\\pos({w // 2},{int(h * preset.subtitle_y)}){pop}}}"
         hi, base = ass_color(preset.subtitle_highlight), ass_color(preset.subtitle_color)
         n = max(1, preset.subtitle_words)
         for i in range(0, len(words), n):

@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from .analysis import detect_scenes, uniqueness
+from .capcut import default_drafts_dir, export_draft
 from .media import fetch, probe
 from .models import Moment, Preset, Transcript
 from .moments import available_pickers, pick
@@ -278,6 +279,30 @@ def render(req: RenderReq):
     set_status(p, "render", "Запускаю монтаж…")
     threading.Thread(target=render_job, args=(req.project, req.moments, req.preset), daemon=True).start()
     return {"ok": True}
+
+
+class CapcutReq(BaseModel):
+    project: str
+    moment: int
+    preset: Preset
+    drafts_dir: str = ""
+
+
+@app.post("/api/capcut")
+def capcut(req: CapcutReq):
+    """Экспорт момента в черновик CapCut для ручной доводки."""
+    p = project(req.project)
+    if not p.get("video") or not 0 <= req.moment < len(p["moments"]):
+        raise HTTPException(400, "Выберите момент")
+    target = Path(req.drafts_dir).expanduser() if req.drafts_dir.strip() else default_drafts_dir()
+    found = target is not None
+    target = target or DATA / "capcut_drafts"
+    try:
+        path = export_draft(Path(p["video"]), Moment.model_validate(p["moments"][req.moment]),
+                            req.preset, transcript_of(p), target)
+    except ImportError:
+        raise HTTPException(400, "Не установлена библиотека pycapcut (pip install pycapcut)")
+    return {"path": str(path), "capcut_found": found}
 
 
 def clip_path(pid: str, name: str) -> Path:

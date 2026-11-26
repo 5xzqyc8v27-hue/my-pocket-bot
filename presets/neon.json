@@ -1,0 +1,17 @@
+{
+  "name": "neon",
+  "layout": "reaction",
+  "webcam_share": 0.44,
+  "title_y": 0.43,
+  "title_size": 92,
+  "title_color": "F6ECFF",
+  "title_glow": "A020F0",
+  "title_anim": true,
+  "subtitle_y": 0.74,
+  "subtitle_words": 1,
+  "subtitle_upper": true,
+  "subtitle_pop": true,
+  "subtitle_size": 92,
+  "subtitle_highlight": "FFFFFF",
+  "watermark": "@nick"
+}

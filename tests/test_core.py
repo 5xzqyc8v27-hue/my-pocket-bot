@@ -32,3 +32,9 @@ def test_clean_drops_overlaps_and_bad_lengths():
     moments = [Moment(start=0, end=30, title="a", score=90), Moment(start=20, end=50, title="b", score=80),
                Moment(start=60, end=62, title="c", score=99), Moment(start=70, end=100, title="d", score=70)]
     assert [m.title for m in _clean(moments, 200, 20, 60, 5)] == ["a", "d"]
+
+
+def test_parse_json_reply_tolerates_wrapping_text():
+    from clipper.moments import _parse_json_reply
+    text = 'Вот моменты:\n```json\n{"moments": [{"start": 1, "end": 31, "title": "x"}]}\n```'
+    assert _parse_json_reply(text)[0].end == 31

@@ -28,10 +28,17 @@ python -m clipper clip video.mp4 --start 120 --end 150 --title "Надпись �
 
 ## Выбор моментов
 
-- `--picker claude` — моменты выбирает Claude по расшифровке. Нужен ключ:
-  `export ANTHROPIC_API_KEY=...`. Модель меняется через `CLIPPER_MODEL`.
-- `--picker heuristic` — локально, без API: всплески громкости и плотность речи.
-- `--picker auto` (по умолчанию) — Claude, если ключ задан, иначе эвристика.
+Четыре способа, `--picker auto` (по умолчанию) берёт первый доступный и при сбое
+переходит к следующему:
+
+| `--picker` | На чём работает | Что нужно |
+|---|---|---|
+| `claude` | Claude API, тратит кредиты | `export ANTHROPIC_API_KEY=...` (модель — `CLIPPER_MODEL`) |
+| `claude-cli` | Подписка Claude через Claude Code, кредиты не тратит | Установить Claude Code и один раз войти (`claude`, затем `/login`) |
+| `ollama` | Локальная нейросеть, бесплатно и без интернета | `brew install ollama && ollama pull qwen2.5:7b` (модель — `CLIPPER_OLLAMA_MODEL`) |
+| `heuristic` | Без нейросети: всплески громкости и плотность речи | Ничего |
+
+Расшифровка речи и монтаж всегда идут локально и ничего не стоят.
 
 ## Раскладки (`presets/*.json`)
 

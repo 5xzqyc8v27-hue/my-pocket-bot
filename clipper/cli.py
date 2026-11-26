@@ -9,7 +9,8 @@ from pathlib import Path
 
 from .media import fetch, probe
 from .models import Moment, Preset, Transcript
-from .moments import pick_heuristic, pick_with_claude
+from .moments import (available_pickers, pick_heuristic, pick_with_claude, pick_with_claude_cli,
+                      pick_with_ollama)
 from .render import render_clip
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,17 +59,28 @@ def cmd_run(args) -> int:
     if tr and not tr.duration:
         tr.duration = info["duration"]
 
-    picker = args.picker
-    if picker == "auto":
-        picker = "claude" if tr and tr.segments and os.environ.get("ANTHROPIC_API_KEY") else "heuristic"
-    print(f"Ищу моменты ({picker})…", flush=True)
-    if picker == "claude":
-        if not tr or not tr.segments:
-            print("Для выбора через Claude нужна расшифровка.", file=sys.stderr)
-            return 2
-        moments = pick_with_claude(tr, args.count, args.min, args.max)
+    has_text = bool(tr and tr.segments)
+    if args.picker == "auto":
+        chain = [p for p in available_pickers() if has_text or p == "heuristic"]
     else:
-        moments = pick_heuristic(video, tr, args.count, args.min, args.max)
+        chain = [args.picker]
+    llm = {"claude": pick_with_claude, "claude-cli": pick_with_claude_cli, "ollama": pick_with_ollama}
+    moments = []
+    for picker in chain:
+        print(f"Ищу моменты ({picker})…", flush=True)
+        if picker == "heuristic":
+            moments = pick_heuristic(video, tr, args.count, args.min, args.max)
+            break
+        if not has_text:
+            print(f"Для «{picker}» нужна расшифровка речи.", file=sys.stderr)
+            return 2
+        try:
+            moments = llm[picker](tr, args.count, args.min, args.max)
+            break
+        except Exception as exc:  # любой сбой нейросети — пробуем следующий способ
+            print(f"  {picker} не сработал: {exc}", file=sys.stderr)
+            if picker == chain[-1]:
+                return 1
     if not moments:
         print("Подходящих моментов не нашлось.", file=sys.stderr)
         return 1
@@ -110,8 +122,8 @@ def main(argv: list[str] | None = None) -> int:
     run_p.add_argument("--count", type=int, default=5, help="Сколько роликов сделать")
     run_p.add_argument("--min", type=float, default=20, help="Мин. длина ролика, с")
     run_p.add_argument("--max", type=float, default=60, help="Макс. длина ролика, с")
-    run_p.add_argument("--picker", choices=["auto", "claude", "heuristic"], default="auto",
-                       help="Кто выбирает моменты: Claude API или локальная эвристика")
+    run_p.add_argument("--picker", choices=["auto", "claude", "claude-cli", "ollama", "heuristic"], default="auto",
+                       help="Кто выбирает моменты: Claude API, подписка Claude, локальная Ollama, эвристика")
     run_p.set_defaults(func=cmd_run)
 
     clip_p = sub.add_parser("clip", help="Смонтировать один отрезок вручную")

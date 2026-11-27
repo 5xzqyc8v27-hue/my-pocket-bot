@@ -128,7 +128,7 @@ class Preset(BaseModel):
     censor: bool = False  # закрывать мат звёздочками в субтитрах
     subtitle_pop: bool = False  # каждое слово «выпрыгивает»
     watermark: str = ""  # ник мелким текстом поверх кадра
-    watermark_y: float = 0.86
+    watermark_y: float = 0.965
     font: str = "Arial"
     # уникализация: видимые изменения картинки и темпа
     mirror: bool = False

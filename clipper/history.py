@@ -53,3 +53,18 @@ def fetch_vod_chat(url: str, video: Path) -> int:
     video.with_suffix(".chat.jsonl").write_text(
         "\n".join(json.dumps(m, ensure_ascii=False) for m in chat), encoding="utf-8")
     return len(chat)
+
+
+CLIP_RANGES = {"24hr": "за сутки", "7d": "за неделю", "30d": "за месяц", "all": "за всё время"}
+
+
+def list_clips(channel: str, period: str = "7d", limit: int = 40) -> list[dict]:
+    """Самые популярные клипы зрителей канала Twitch — зрители уже отобрали смешное за нас."""
+    if period not in CLIP_RANGES:
+        raise RuntimeError("Период: 24hr, 7d, 30d или all")
+    url = f"https://www.twitch.tv/{channel}/clips?filter=clips&range={period}"
+    proc = subprocess.run(["yt-dlp", "--flat-playlist", "--dump-single-json", "--playlist-end", str(limit), url],
+                          capture_output=True, text=True, timeout=180)
+    if proc.returncode != 0:
+        raise RuntimeError(f"Не удалось получить клипы: {proc.stderr.strip()[-300:]}")
+    return sorted(parse_entries(json.loads(proc.stdout)), key=lambda e: -e["views"])

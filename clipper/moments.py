@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import urllib.error
@@ -39,11 +40,16 @@ def _format_transcript(tr: Transcript) -> str:
     return "\n".join(f"[{s.start:.1f}-{s.end:.1f}] {s.text}" for s in tr.segments)
 
 
+HINTS: dict = {"text": ""}  # подсказки по звуку для текущего видео (смех, крик)
+
+
 def _prompt(tr: Transcript, count: int, min_len: float, max_len: float, focus: str = "", avoid: str = "") -> str:
     want = f"Особенно ищи моменты такого типа: {focus}.\n" if focus.strip() else ""
     if avoid.strip():
         want += (f"Темы, за которые автору могут не заплатить: {avoid}. Такие моменты НЕ исключай и оценку не занижай — "
                  f"просто впиши в поле risk, какую тему задевает момент. Если не задевает — оставь risk пустым.\n")
+    if HINTS["text"]:
+        want += HINTS["text"] + "\n"
     return want + (
         f"Нужно до {count} моментов длиной от {min_len:.0f} до {max_len:.0f} секунд.\n"
         f"Длительность видео: {tr.duration:.0f} с.\n\nРасшифровка:\n{_format_transcript(tr)}"
@@ -259,6 +265,20 @@ def _clean(moments: list[Moment], duration: float, min_len: float, max_len: floa
 def pick(video: Path, tr: Transcript | None, picker: str, count: int, min_len: float,
          max_len: float, log=print, focus: str = "", avoid: str = "") -> tuple[list[Moment], str]:
     """Выбирает моменты указанным способом; в режиме auto перебирает доступные по очереди."""
+    HINTS["text"] = ""
+    try:  # смех и крик по звуку — подсказка нейросети, где искать
+        from .laughter import find_bursts
+        bursts = find_bursts(video, count=12)
+        if bursts:
+            def label(t: float) -> str:  # слов рядом нет или одни «ааа/ха-ха» — это смех или крик, иначе громкая речь
+                near = " ".join(w.text for w in tr.words_between(t - 1, t + 1)).lower() if tr else ""
+                wordless = not re.sub(r"[^а-яёa-z]", "", near) or re.search(r"(ха){2,}|а{4,}|ах(ах)+", near)
+                return "смех или крик" if wordless else "эмоциональная речь"
+            HINTS["text"] = ("По звуку найдены эмоциональные всплески (секунды от начала): "
+                             + ", ".join(f"{b['t']:.0f} — {label(b['t'])}" for b in bursts)
+                             + ". Рядом с ними часто самые сильные места, но решай по тексту.")
+    except Exception:
+        bursts = []
     has_text = bool(tr and tr.segments)
     chain = [p for p in available_pickers() if has_text or p == "heuristic"] if picker == "auto" else [picker]
     llm = {"claude": pick_with_claude, "claude-cli": pick_with_claude_cli, "ollama": pick_with_ollama}

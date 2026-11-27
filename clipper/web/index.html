@@ -343,7 +343,7 @@ function openCustom(title, build, wide) { modal = {title, build, wide}; drawCust
 function drawCustom() { if (!modal || typeof modal === 'string') return; const d = $('#modal');
   $('#modalTitle').textContent = modal.title; d.classList.toggle('narrow', !modal.wide); $('#modalBody').replaceChildren(...[modal.build()].flat().filter(Boolean)); if (!d.open) d.showModal(); }
 function closeModal() { modal = null; const d = $('#modal'); if (d.open) d.close(); }
-let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''}, themeStreamer = '', themeMusic = '', styleCount = 1, hist = {}, histPick = {}, story = {topic: '', script: '', title: '', voice: '', music: '', projects: new Set()}, histOpt = {preset: 'reaction', focus: '', count: 8};
+let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''}, themeStreamer = '', themeMusic = '', styleCount = 1, hist = {}, histPick = {}, histMode = 'vods', clipRange = '7d', story = {topic: '', script: '', title: '', voice: '', music: '', projects: new Set()}, histOpt = {preset: 'reaction', focus: '', count: 8};
 let view = 'Проект', owner = 'common', kind = 'photos';
 let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: [], themes: {}, theme_status: {}, queue: {}, story_status: {}, blotato: false}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
 
@@ -446,7 +446,7 @@ function insertsRow(p, m, i) {
   return h('div', {style: 'margin-top:8px;border-top:1px solid var(--line);padding-top:8px'},
     h('div', {class: 'hooks', style: 'margin:0 0 6px'},
       h('span', {class: 'mute'}, 'Вставки: ' + (list.length || 'нет')),
-      h('button', {class: 'btn small', title: 'Мем или эмодзи и звук на запинках, повторах и самых громких местах — из материалов', onclick: () => api(`/api/projects/${p.id}/moments/${i}/auto_inserts`, 'POST').then(() => refresh(true)).catch(e => alert(e.message))}, 'Авто'),
+      h('button', {class: 'btn small', title: 'Claude подбирает мем, эмодзи или звук из материалов под смысл реплики; без него — на запинки и громкие места', onclick: () => api(`/api/projects/${p.id}/moments/${i}/auto_inserts`, 'POST').then(() => refresh(true)).catch(e => alert(e.message))}, 'Авто'),
       list.length ? h('button', {class: 'btn small', onclick: () => put([])}, 'Убрать все') : null),
     list.map((x, n) => h('div', {class: 'kv'}, h('span', {}, `${x.at} с · ${x.file.split('/').slice(1).join('/')}`), h('button', {class: 'btn small', onclick: () => put(list.filter((_, k) => k !== n))}, '×'))),
     refs.length ? h('div', {class: 'row'},
@@ -554,17 +554,21 @@ function streamerCard(st) {
           st.last_clip ? h('span', {class: 'pill'}, 'последний ролик ' + ago(st.last_clip)) : null)),
       h('div', {class: 'actions', style: 'flex:none'},
         h('button', {class: 'btn small', onclick: () => openCustom('Настройки: ' + st.name, () => [streamerStages(live()), rulesBlock(live())], true)}, 'Настройки'),
-        st.platform === 'twitch' ? h('button', {class: 'btn small', onclick: () => openCustom('История трансляций: ' + st.name, () => historyBlock(live()), true)}, 'История') : null,
+        st.platform === 'twitch' ? h('button', {class: 'btn small', onclick: () => openCustom('Трансляции и клипы: ' + st.name, () => historyBlock(live()), true)}, 'История и клипы') : null,
         h('button', {class: 'btn small', onclick: () => api(`/api/streamers/${st.id}/check`, 'POST').then(() => { toast('Проверяю эфир ' + st.name + '…'); setTimeout(() => refresh(true), 2500); })}, 'Проверить эфир'),
         h('button', {class: 'btn small', 'aria-label': 'Удалить стримера', onclick: async () => { if (confirm('Удалить стримера ' + st.name + '? Записи и ролики останутся на диске.')) { await api('/api/streamers/' + st.id, 'DELETE'); refresh(true); } }}, '×'))),
     projects.length ? h('div', {class: 'hooks', style: 'margin-top:12px'}, projects.sort((a, b) => b.created - a.created).slice(0, 8).map(p => h('button', {class: 'btn small', onclick: () => { cur = p.id; mom = 0; picked = new Set(); view = 'Проект'; renderAll(); }}, p.title, ' · ', (p.clips || []).length, ' рол.'))) : null);
 }
 function historyBlock(st) {
-  const items = hist[st.id], pick = histPick[st.id] || (histPick[st.id] = new Set());
-  const load = async force => { try { hist[st.id] = await (await api(`/api/streamers/${st.id}/history` + (force ? '?refresh=true' : ''))).json(); } catch (e) { alert(e.message); hist[st.id] = []; } drawCustom(); };
+  const key = histMode === 'vods' ? st.id : st.id + ':' + clipRange;
+  const items = hist[key], pick = histPick[st.id] || (histPick[st.id] = new Set());
+  const load = async force => { try { hist[key] = await (await api(histMode === 'vods' ? `/api/streamers/${st.id}/history` + (force ? '?refresh=true' : '') : `/api/streamers/${st.id}/clips?period=${clipRange}`)).json(); } catch (e) { alert(e.message); hist[key] = []; } drawCustom(); };
   const dur = d => d ? `${Math.floor(d / 3600)} ч ${Math.floor(d % 3600 / 60)} мин` : '—';
-  if (!items) { load(false); return h('div', {class: 'mute'}, 'Загружаю историю…'); }
-  return h('div', {},
+  const modes = h('div', {class: 'row', style: 'margin-bottom:12px'},
+    h('div', {class: 'seg'}, [['vods', 'Трансляции целиком'], ['clips', 'Клипы зрителей']].map(([k, n]) => h('button', {class: k === histMode ? 'on' : '', onclick: () => { histMode = k; drawCustom(); }}, n))),
+    histMode === 'clips' ? h('select', {style: 'flex:0 0 170px', onchange: e => { clipRange = e.target.value; drawCustom(); }}, [['24hr', 'За сутки'], ['7d', 'За неделю'], ['30d', 'За месяц'], ['all', 'За всё время']].map(([k, n]) => h('option', {value: k, selected: k === clipRange}, n))) : null);
+  if (!items) { load(false); return h('div', {}, modes, h('div', {class: 'mute'}, 'Загружаю…')); }
+  return h('div', {}, modes, histMode === 'clips' ? h('div', {class: 'mute', style: 'margin-bottom:10px'}, 'Клипы, которые вырезали сами зрители, по числу просмотров. Берите лучшие и монтируйте в своём оформлении.') : null,
     h('div', {class: 'row', style: 'margin-bottom:8px'},
       h('div', {class: 'field', style: 'margin:0'}, h('label', {}, 'Формат (пресет)'), h('select', {onchange: e => { histOpt.preset = e.target.value; }}, h('option', {value: ''}, 'Только найти моменты'), S.presets.map(x => h('option', {value: x.name, selected: x.name === histOpt.preset}, 'Сразу монтировать: ' + x.name)))),
       h('div', {class: 'field', style: 'margin:0'}, h('label', {}, 'Что искать'), h('select', {onchange: e => { histOpt.focus = e.target.value; }}, [...$('#focus').options].map(o => h('option', {value: o.value, selected: o.value === histOpt.focus}, o.textContent)))),
@@ -577,7 +581,7 @@ function historyBlock(st) {
       h('button', {class: 'btn', style: 'flex:none;align-self:end', onclick: () => load(true)}, 'Обновить')),
     items.length ? items.map(v => h('label', {class: 'kv', style: 'padding:4px 0;cursor:pointer'},
       h('span', {style: 'color:var(--text)'}, h('input', {type: 'checkbox', checked: pick.has(v.url), onchange: e => { e.target.checked ? pick.add(v.url) : pick.delete(v.url); }}), ' ', v.title || v.id),
-      h('span', {}, `${v.ts ? new Date(v.ts * 1000).toLocaleDateString('ru') : ''} · ${dur(v.duration)} · ${num(v.views)} просм.`))) : h('div', {class: 'mute'}, 'Прошедших трансляций не найдено — возможно, стример не хранит записи.'));
+      h('span', {}, `${v.ts ? new Date(v.ts * 1000).toLocaleDateString('ru') : ''} · ${dur(v.duration)} · ${num(v.views)} просм.`))) : h('div', {class: 'mute'}, histMode === 'clips' ? 'Клипов за этот период не найдено.' : 'Прошедших трансляций не найдено — возможно, стример не хранит записи.'));
 }
 function addStreamerForm() {
   let name, platform, channel;

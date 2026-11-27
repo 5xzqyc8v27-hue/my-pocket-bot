@@ -80,7 +80,8 @@ def render_top(source: Path, moments: list[Moment], title: str, preset: Preset, 
             cam_h = _even(bh * 0.46)
             content = (f"[f{j}]split=2[fa{j}][fb{j}];"
                        f"[fa{j}]crop=iw*{w}:ih*{h}:iw*{x}:ih*{y},scale={bw}:{cam_h}:force_original_aspect_ratio=increase,crop={bw}:{cam_h}[ca{j}];"
-                       f"[fb{j}]scale={bw}:{bh - cam_h}:force_original_aspect_ratio=increase,crop={bw}:{bh - cam_h}[cb{j}];"
+                       f"[fb{j}]scale={bw}:{bh - cam_h}:force_original_aspect_ratio=increase,"
+                       f"crop={bw}:{bh - cam_h}:(iw-{bw})*{1.0 if x + w / 2 < 0.35 else 0.0 if x + w / 2 > 0.65 else 0.5}:(ih-{bh - cam_h})/2[cb{j}];"
                        f"[ca{j}][cb{j}]vstack[c{j}]")
         else:
             content = f"[f{j}]scale={bw}:{bh}:force_original_aspect_ratio=decrease[c{j}]"

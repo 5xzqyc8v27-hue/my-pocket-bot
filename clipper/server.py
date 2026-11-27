@@ -1182,6 +1182,46 @@ def set_inserts(pid: str, i: int, req: InsertsReq):
     return p["moments"][i]
 
 
+INSERT_SYSTEM = """Ты монтируешь мемную нарезку стримера. Тебе дают реплики ролика с временем и список
+файлов из библиотеки: мем-видео, картинки, эмодзи, звуки (смысл файла понятен по названию).
+Подбери 1-4 вставки, которые усиливают шутку: реакция на фразу, звук на провал, эмодзи на эмоцию.
+Вставка должна подходить по смыслу к словам в этот момент; если ничего не подходит — верни пустой список.
+Не ставь вставки чаще, чем раз в 2 секунды, и не в первую секунду.
+Ответь только JSON: {"inserts": [{"file": "точное имя из списка", "at": секунда_от_начала_ролика, "why": "почему"}]}"""
+
+
+def smart_inserts(m: dict, tr: Transcript | None, pool: dict, peaks: list[float]) -> list[Insert]:
+    """Вставки по смыслу: Claude выбирает файл под конкретную реплику. Пусто, если Claude недоступен."""
+    files = pool["visual"] + pool["sounds"]
+    if not tr or not files or not llm.available():
+        return []
+    length = m["end"] - m["start"]
+    lines = [f"[{s.start - m['start']:.1f}] {s.text}" for s in tr.segments if s.end > m["start"] and s.start < m["end"]]
+    if not lines:
+        return []
+    names = {ref.split("/", 1)[1]: ref for ref in files}
+    prompt = (f"Длина ролика {length:.0f} с.\nРеплики:\n" + "\n".join(lines) +
+              f"\n\nЗапинки и громкие места (секунды): {', '.join(f'{p:.1f}' for p in peaks) or 'нет'}" +
+              "\n\nБиблиотека:\n" + "\n".join(sorted(names)))
+    try:
+        reply = llm.ask(prompt, INSERT_SYSTEM, 1500)
+        data = json.loads(reply[reply.find("{"):reply.rfind("}") + 1])
+    except Exception:
+        return []
+    out: list[Insert] = []
+    for item in data.get("inserts", [])[:4]:
+        ref = names.get(str(item.get("file", "")).strip())
+        try:
+            at = float(item.get("at", -1))
+        except (TypeError, ValueError):
+            continue
+        if ref and 0.5 <= at < length - 0.5:
+            sound = "/sounds/" in ref
+            out.append(Insert(file=ref, at=round(at, 1), duration=2.0 if sound else 1.5,
+                              place="top" if "/emoji/" in ref else "center", scale=0.3 if "/emoji/" in ref else 0.5))
+    return out
+
+
 @app.post("/api/projects/{pid}/moments/{i}/auto_inserts")
 def auto_inserts(pid: str, i: int):
     """Авто-вставки: на самых громких местах ставим случайный мем или эмодзи и звук из материалов."""
@@ -1204,6 +1244,12 @@ def auto_inserts(pid: str, i: int):
         if len(peaks) < 3 and all(abs(t - x) > 2 for x in peaks):
             peaks.append(t)
     peaks = sorted(peaks) or [round((m["end"] - m["start"]) * 0.5, 2)]
+    smart = smart_inserts(m, tr, pool, peaks)
+    if smart:
+        with lock:
+            m["inserts"] = [x.model_dump() for x in smart]
+        save_state()
+        return m
     made = []
     for t in peaks:
         if pool["visual"]:
@@ -1270,6 +1316,22 @@ def streamer_history(sid: str, refresh: bool = False):
         raise HTTPException(400, str(exc)[:300])
     history_cache[sid] = {"at": time.time(), "items": items}
     return items
+
+
+@app.get("/api/streamers/{sid}/clips")
+def streamer_clips(sid: str, period: str = "7d"):
+    """Популярные клипы зрителей канала — готовая подсказка, какие моменты смешные."""
+    st = state["streamers"].get(sid)
+    if not st:
+        raise HTTPException(404, "Стример не найден")
+    if st["platform"] != "twitch":
+        raise HTTPException(400, "Клипы зрителей пока доступны только для Twitch")
+    try:
+        return history.list_clips(st["channel"], period)
+    except FileNotFoundError:
+        raise HTTPException(400, "yt-dlp не установлен (pip install yt-dlp)")
+    except Exception as exc:
+        raise HTTPException(400, str(exc)[:300])
 
 
 # ---------- материалы по ссылке ----------

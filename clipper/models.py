@@ -30,7 +30,8 @@ class Transcript(BaseModel):
             if seg.end < start or seg.start > end:
                 continue
             words = seg.words or _spread_words(seg)
-            out.extend(w for w in words if w.end > start and w.start < end)
+            # пометки распознавания вроде «[музыка]» в субтитры не идут
+            out.extend(w for w in words if w.end > start and w.start < end and not w.text.strip().startswith(("[", "(")))
         return out
 
     @classmethod
@@ -141,6 +142,7 @@ class Preset(BaseModel):
     # движение камеры: none, push (медленный наезд), punch (резкие наезды на громких местах), both
     camera: str = "none"
     camera_strength: float = 0.12
+    event_zoom: bool = False  # двойной наезд на запинках и повторах (если их нет — на самых громких местах)
     # баннер / водяной знак (png) поверх кадра
     banner: str | None = None
     banner_y: float = 0.9

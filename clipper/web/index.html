@@ -250,6 +250,7 @@ const TABS = {
   'Уникализация': [
     ['camera', 'Движение камеры', 'select', {none: 'Нет', push: 'Плавный наезд', punch: 'Резкие наезды на громких местах', both: 'Оба'}],
     ['camera_strength', 'Сила наезда', 'range', [0.04, 0.3, 0.01]],
+    ['event_zoom', 'Двойной наезд на запинках и повторах', 'bool'],
     ['chat_hide_nick', 'Скрывать ник зрителя в роликах по чату', 'bool'],
     ['mirror', 'Отзеркалить', 'bool'],
     ['speed', 'Скорость', 'range', [0.9, 1.15, 0.01]],
@@ -380,7 +381,7 @@ function insertsRow(p, m, i) {
   return h('div', {style: 'margin-top:8px;border-top:1px solid var(--line);padding-top:8px'},
     h('div', {class: 'hooks', style: 'margin:0 0 6px'},
       h('span', {class: 'mute'}, 'Вставки: ' + (list.length || 'нет')),
-      h('button', {class: 'btn small', title: 'Мем или эмодзи и звук на самых громких местах — из материалов', onclick: () => api(`/api/projects/${p.id}/moments/${i}/auto_inserts`, 'POST').then(() => refresh(true)).catch(e => alert(e.message))}, 'Авто'),
+      h('button', {class: 'btn small', title: 'Мем или эмодзи и звук на запинках, повторах и самых громких местах — из материалов', onclick: () => api(`/api/projects/${p.id}/moments/${i}/auto_inserts`, 'POST').then(() => refresh(true)).catch(e => alert(e.message))}, 'Авто'),
       list.length ? h('button', {class: 'btn small', onclick: () => put([])}, 'Убрать все') : null),
     list.map((x, n) => h('div', {class: 'kv'}, h('span', {}, `${x.at} с · ${x.file.split('/').slice(1).join('/')}`), h('button', {class: 'btn small', onclick: () => put(list.filter((_, k) => k !== n))}, '×'))),
     refs.length ? h('div', {class: 'row'},

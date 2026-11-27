@@ -60,8 +60,11 @@ def transcribe_sherpa(video: Path, model_size: str = "small", language: str | No
         while not vad.empty():
             seg = vad.front
             samples = np.array(seg.samples, dtype=np.float32)
+            # Движок ограничивает число слов длиной звука, и скороговорка обрезается —
+            # дополняем кусок тишиной, чтобы быстрой речи хватило места.
+            pad = max(0, int(max(len(samples) * 2.5, 8 * 16000)) - len(samples))
             stream = rec.create_stream()
-            stream.accept_waveform(16000, samples)
+            stream.accept_waveform(16000, np.concatenate([samples, np.zeros(pad, dtype=np.float32)]))
             rec.decode_stream(stream)
             text = stream.result.text.strip()
             if text:

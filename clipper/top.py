@@ -41,7 +41,7 @@ def build_top_ass(title: str, labels: list[str], starts: list[float], total: flo
     """labels[k] — подпись места k+1; starts[k] — когда это место начинает играть."""
     w, h = preset.width, preset.height
     size = 66
-    out = HEADER.format(w=w, h=h, font=preset.font, sub_size=44, sub_color=ass_color("FFFFFF"),
+    out = HEADER.format(w=w, h=h, font=preset.font, sub_size=54, sub_color=ass_color("FFFFFF"),
                         sub_outline=4, title_size=size, title_color=ass_color("FFFFFF"), title_outline=5)
     span = f"{ass_time(0)},{ass_time(total)}"
     lines = []

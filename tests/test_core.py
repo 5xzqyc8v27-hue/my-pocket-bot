@@ -155,3 +155,24 @@ def test_blotato_requests_follow_the_official_package(tmp_path):
     assert blotato.target("youtube", "T" * 150)["title"] == "T" * 100
     assert blotato.target("instagram", "")["mediaType"] == "reel"
     assert blotato.status("sub-1", send)["state"] == "published"
+
+
+def test_find_stutters_catches_repeats_and_slips():
+    from clipper.events import find_stutters
+    def ws(text):
+        return [Word(start=i * 0.5, end=i * 0.5 + 0.4, text=t) for i, t in enumerate(text.split())]
+    kinds = lambda text: [(f["kind"], f["text"]) for f in find_stutters(ws(text))]
+    assert kinds("своя рабоработория лаборатория с грязнульками")[0] == ("оговорка", "рабоработория")
+    assert ("повтор слова", "я") not in kinds("а я пошёл домой")
+    assert kinds("ну это это вообще что такое")[0][0] == "повтор слова"
+    rep = kinds("сейчас ребята секунду мне будто плохо стало сейчас ребята секунду")
+    assert any(k == "повтор фразы" for k, _ in rep)
+    assert kinds("обычная фраза без всяких запинок сегодня") == []
+
+
+def test_find_stutters_catches_self_correction():
+    from clipper.events import find_stutters
+    words = [Word(start=i * 0.6, end=i * 0.6 + 0.5, text=t) for i, t in
+             enumerate("своя рабб раборатория грязнуль лаборатория грязнули да".split())]
+    kinds = [f["kind"] for f in find_stutters(words, min_gap=0.5)]
+    assert "запинка" in kinds and "оговорка" in kinds

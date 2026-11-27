@@ -1128,8 +1128,13 @@ def auto_inserts(pid: str, i: int):
             pool["sounds" if kind == "sounds" else "visual"] += [f"{owner}/{kind}/{f}" for f in files]
     if not pool["visual"] and not pool["sounds"]:
         raise HTTPException(400, "Сначала загрузите мем-вставки, эмодзи или звуки во вкладке «Материалы»")
-    peaks = loud_peaks(Path(p["video"]), m["start"], m["end"] - m["start"], count=3) or [
-        round((m["end"] - m["start"]) * 0.5, 2)]
+    from .events import find_stutters
+    tr = transcript_of(p)
+    peaks = [e["t"] for e in find_stutters(tr.words_between(m["start"], m["end"]), m["start"])][:3] if tr else []
+    for t in loud_peaks(Path(p["video"]), m["start"], m["end"] - m["start"], count=3):  # добираем громкими местами
+        if len(peaks) < 3 and all(abs(t - x) > 2 for x in peaks):
+            peaks.append(t)
+    peaks = sorted(peaks) or [round((m["end"] - m["start"]) * 0.5, 2)]
     made = []
     for t in peaks:
         if pool["visual"]:

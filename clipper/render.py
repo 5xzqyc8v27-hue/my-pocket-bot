@@ -17,7 +17,7 @@ def _cover(w: int, h: int) -> str:
     return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
 
 
-def camera_filter(preset: Preset, length: float, peaks: list[float]) -> str | None:
+def camera_filter(preset: Preset, length: float, peaks: list[float], events: list[float] | None = None) -> str | None:
     """Движение камеры по готовому кадру: медленный наезд и резкие наезды на громких местах."""
     k, fps = preset.camera_strength, preset.fps
     terms = []
@@ -25,6 +25,9 @@ def camera_filter(preset: Preset, length: float, peaks: list[float]) -> str | No
         terms.append(f"{k * 0.6:.4f}*on/{max(1, int(length * fps))}")
     if preset.camera in ("punch", "both"):
         terms += [f"{k:.4f}*max(0,1-abs(on/{fps}-{c:.2f})/0.35)" for c in peaks]
+    for c in events or []:  # двойной наезд: шаг ближе, ещё ближе, резкий возврат
+        t = f"on/{fps}"
+        terms += [f"{k * 1.1:.4f}*between({t},{c:.2f},{c + 0.38:.2f})", f"{k * 2.3:.4f}*between({t},{c + 0.38:.2f},{c + 1.25:.2f})"]
     if not terms:
         return None
     return (f"zoompan=z='1+{'+'.join(terms)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
@@ -90,7 +93,9 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
         cam_h = _even(H * preset.webcam_share)
         x, y, w, h = preset.webcam
         cam = f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y},{_cover(W, cam_h)}"
-        game = f"scale=iw*{preset.content_zoom}:-2,{_cover(W, H - cam_h)}"
+        side = 1.0 if x + w / 2 < 0.35 else 0.0 if x + w / 2 > 0.65 else 0.5  # игру берём подальше от вебки
+        game = (f"scale=iw*{preset.content_zoom}:-2,scale={W}:{H - cam_h}:force_original_aspect_ratio=increase,"
+                f"crop={W}:{H - cam_h}:(iw-{W})*{side}:(ih-{H - cam_h})/2")
         order = "[cam][game]" if preset.webcam_position == "top" else "[game][cam]"
         parts += ["[src]split=2[a][b]", f"[a]{cam}[cam]", f"[b]{game}[game]", f"{order}vstack[v]"]
     elif layout == "full":  # без вебки: вертикальный кусок кадра на весь экран
@@ -210,9 +215,19 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
         from .moments import loud_peaks
         peaks = [p / preset.speed for p in loud_peaks(source, moment.start, moment.duration)]
     cam_times = [(max(0.0, p - 0.3), min(out_len, p + 1.5)) for p in peaks[:2]] if preset.cam_fullscreen else None
+    events = []
+    if preset.event_zoom:
+        from .events import find_stutters
+        words = transcript.words_between(moment.start, moment.end) if transcript else []
+        events = [e["t"] / preset.speed for e in find_stutters(words, moment.start)][:3]
+        if not events:  # запинок нет — берём самые громкие места
+            from .moments import loud_peaks
+            events = [p / preset.speed for p in loud_peaks(source, moment.start, moment.duration, count=2)]
+        events = [e for e in events if e + 1.3 < out_len]
     if preset.camera not in ("punch", "both"):
         peaks = []
-    camera = camera_filter(preset, out_len, peaks)
+    peaks = [p for p in peaks if all(abs(p - e) > 1.5 for e in events)]
+    camera = camera_filter(preset, out_len, peaks, events)
     inserts = []
     for ins in moment.inserts:
         path = Path(resolve(ins.file)) if resolve else Path(ins.file)

@@ -247,7 +247,7 @@ const SUB_STYLES = {
   'По слову': {subtitle_color: 'FFE600', subtitle_highlight: 'FFFFFF', subtitle_upper: true, subtitle_words: 1, subtitle_size: 100},
   'Спокойные': {subtitle_color: 'E8EAED', subtitle_highlight: 'FF8AD8', subtitle_upper: false, subtitle_words: 4, subtitle_size: 58},
 };
-let FONTS = [], commonTitle = '';
+let FONTS = [], commonTitle = '', ipInfo = null;
 let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''}, themeStreamer = '', themeMusic = '', styleCount = 1, hist = {}, histPick = {}, story = {topic: '', script: '', title: '', voice: '', music: '', projects: new Set()}, histOpt = {preset: 'reaction', focus: '', count: 8};
 let view = 'Проект', owner = 'common', kind = 'photos';
 let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: [], themes: {}, theme_status: {}, queue: {}, story_status: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
@@ -519,7 +519,13 @@ function renderAccounts() {
         h('button', {class: 'btn primary', style: 'flex:none', onclick: async () => { try { await api('/api/accounts', 'POST', {platform: pl.value, handle: handle.value, email: email.value, device: device.value, streamer: streamer.value, notes: notes.value}); refresh(true); } catch (e) { alert(e.message); } }}, 'Сохранить'))),
     h('div', {class: 'card'}, list.length ? list.map(a => h('div', {class: 'kv', style: 'padding:7px 0;border-bottom:1px solid var(--line);font-size:13px'},
       h('span', {style: 'color:var(--text)'}, h('span', {class: 'pill'}, names[a.platform]), ' ', h('b', {}, a.handle), h('span', {class: 'mute'}, [a.email && ' · ' + a.email, a.device && ' · ' + a.device, a.streamer && ' · стример: ' + ((S.streamers[a.streamer] || {}).name || a.streamer), a.notes && ' · ' + a.notes].filter(Boolean).join(''))),
+      h('span', {style: 'flex:none'}, a.reach && h('span', {class: 'pill ' + ({ok: 'good', warn: 'warn', bad: 'bad'}[a.reach.level] || ''), title: a.reach.verdict + (a.reach.usual_median != null ? ` · обычно ${num(a.reach.usual_median)}, сейчас ${num(a.reach.recent_median)}` : '')}, {ok: 'охваты в норме', warn: 'охваты упали', bad: 'похоже на ограничение', unknown: 'мало данных'}[a.reach.level]), ' ',
+        a.platform !== 'instagram' && h('button', {class: 'btn small', title: 'Сравнить просмотры последних роликов с обычным уровнем аккаунта', onclick: async e => { e.target.disabled = true; e.target.textContent = 'Проверяю…'; try { const r = await (await api(`/api/accounts/${a.id}/check`, 'POST')).json(); toast(a.handle + ': ' + r.verdict, r.level !== 'ok'); } catch (er) { alert(er.message); } refresh(true); }}, 'Проверить охваты'), ' '),
       h('button', {class: 'btn small', onclick: async () => { if (confirm('Удалить запись об аккаунте ' + a.handle + '?')) { await api('/api/accounts/' + a.id, 'DELETE'); refresh(true); } }}, '×'))) : h('div', {class: 'mute'}, 'Аккаунтов пока нет.')),
+    h('div', {class: 'card'}, h('h2', {}, 'Проверка IP-адреса'),
+      h('div', {class: 'mute', style: 'margin-bottom:10px'}, 'Показывает, как площадки видят адрес этого компьютера: обычный пользовательский, мобильный или адрес дата-центра, VPN и прокси. Запрос уходит в открытый сервис ip-api.com.'),
+      h('button', {class: 'btn', onclick: async e => { e.target.disabled = true; try { ipInfo = await (await api('/api/ip')).json(); } catch (er) { alert(er.message); } renderAccounts(); }}, 'Проверить текущий IP'),
+      ipInfo && h('div', {style: 'margin-top:10px'}, h('span', {class: 'pill ' + (ipInfo.level === 'ok' ? 'good' : 'bad')}, ipInfo.level === 'ok' ? 'чистый' : 'подозрительный'), ' ', h('b', {}, ipInfo.ip), h('span', {class: 'mute'}, ` · ${[ipInfo.country, ipInfo.city].filter(Boolean).join(', ')} · ${ipInfo.provider} · ${ipInfo.kind}`), h('div', {style: 'margin-top:4px'}, ipInfo.verdict))),
     h('div', {class: 'card'}, h('h2', {}, 'Автопостинг'), h('div', {class: 'mute'}, 'Пока не подключён. Для него нужен сервис-посредник (например Blotato) или официальные доступы YouTube и TikTok — вход в аккаунты выполняется на их стороне, а не паролем в этой панели.')));
 }
 

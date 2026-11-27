@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from .analysis import detect_scenes, uniqueness
 from .capcut import default_drafts_dir, export_draft
+from . import health as health_mod
 from . import history, llm
 from . import story as story_mod
 from .schedule import next_slots
@@ -1236,6 +1237,33 @@ def delete_account(aid: str):
         state["accounts"].pop(aid, None)
     save_state()
     return {"ok": True}
+
+
+@app.post("/api/accounts/{aid}/check")
+def check_account(aid: str):
+    """Проверка охватов: сравниваем просмотры последних роликов аккаунта с его обычным уровнем."""
+    acc = state["accounts"].get(aid)
+    if not acc:
+        raise HTTPException(404, "Аккаунт не найден")
+    try:
+        entries = trends.fetch_entries(health_mod.account_url(acc["platform"], acc["handle"]), limit=25)
+        result = health_mod.reach_verdict(entries)
+    except FileNotFoundError:
+        raise HTTPException(400, "yt-dlp не установлен (pip install yt-dlp)")
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)[:300])
+    with lock:
+        acc["reach"] = result
+    save_state()
+    return result
+
+
+@app.get("/api/ip")
+def ip_check():
+    try:
+        return health_mod.check_ip()
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)[:300])
 
 
 def clip_path(pid: str, name: str) -> Path:

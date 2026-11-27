@@ -101,3 +101,18 @@ def test_censor_keeps_punctuation_and_clean_words():
     assert censor_word("блять,") == "б****,"
     assert censor_word("привет") == "привет"
     assert censor_word("Нахуй!") == "Н****!"
+
+
+def test_reach_verdict_and_ip_parse():
+    from clipper.health import parse_ip, reach_verdict
+    now = 1_800_000_000.0
+    def posts(views):
+        return [{"views": v, "ts": now - 86400 * (i + 1)} for i, v in enumerate(views)]
+    assert reach_verdict(posts([5000, 7000, 4000, 6000, 5500, 8000, 3000]), now)["level"] == "ok"
+    drop = reach_verdict(posts([200, 150, 300, 6000, 5500, 8000, 3000]), now)
+    assert drop["level"] == "warn" and "упали" in drop["verdict"]
+    assert reach_verdict(posts([3, 0, 8, 6000, 5500, 8000, 3000]), now)["level"] == "bad"
+    assert reach_verdict(posts([100, 200]), now)["level"] == "unknown"
+    ip = parse_ip({"status": "success", "query": "1.2.3.4", "country": "X", "isp": "Host Ltd", "hosting": True})
+    assert ip["level"] == "bad" and "дата-центра" in ip["verdict"]
+    assert parse_ip({"status": "success", "query": "5.6.7.8", "isp": "Home ISP", "mobile": False})["level"] == "ok"

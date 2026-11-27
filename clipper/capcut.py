@@ -27,9 +27,23 @@ def _rgb(hex_color: str) -> tuple[float, float, float]:
     return tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
 
 
+AUDIO = (".mp3", ".wav", ".ogg", ".m4a", ".aac")
+IMAGE = (".png", ".jpg", ".jpeg", ".webp")
+PLACE_Y = {"top": 0.56, "center": 0.0, "bottom": -0.56, "full": 0.0}
+
+
+def _length(path: Path) -> float:
+    import subprocess
+    try:
+        return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                                     str(path)], capture_output=True, text=True, timeout=30).stdout.strip())
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0.0
+
+
 def export_draft(source: Path, moment: Moment, preset: Preset, transcript: Transcript | None,
-                 drafts_dir: Path, name: str | None = None) -> Path:
-    """Создаёт черновик: видео-отрезок, надпись-хук и субтитры отдельными дорожками."""
+                 drafts_dir: Path, name: str | None = None, resolve=None, music: Path | None = None) -> Path:
+    """Создаёт черновик: видео-отрезок, надпись-хук, субтитры, вставки и звуки — всё отдельными дорожками."""
     import pycapcut as cc
 
     drafts_dir.mkdir(parents=True, exist_ok=True)
@@ -69,5 +83,49 @@ def export_draft(source: Path, moment: Moment, preset: Preset, transcript: Trans
             line = " ".join(w.text for w in group)
             text(line.upper() if preset.subtitle_upper else line, start, end - start,
                  preset.subtitle_size / 6, preset.subtitle_color, preset.subtitle_y, "subs")
+    # вставки момента: звуки — на звуковые дорожки, картинки и ролики — поверх видео; каждая на своей дорожке
+    notes = []
+    for k, ins in enumerate(moment.inserts):
+        path = Path(resolve(ins.file)) if resolve else Path(ins.file)
+        ext = path.suffix.lower()
+        if not path.is_file() or ins.at >= length:
+            continue
+        if ext in (".webm", ".gif"):  # CapCut такие файлы не открывает — кладём неподвижную картинку
+            still = drafts_dir / name / f"insert{k}.png"
+            import subprocess
+            decoder = ["-c:v", "libvpx-vp9"] if ext == ".webm" else []
+            done = subprocess.run(["ffmpeg", "-y", "-v", "error", *decoder, "-ss", "0.5", "-i", str(path),
+                                   "-frames:v", "1", str(still)], capture_output=True, timeout=60)
+            if done.returncode != 0 or not still.exists():
+                notes.append(path.name)
+                continue
+            path, ext = still, ".png"
+        dur = min(ins.duration, length - ins.at)
+        if ext not in IMAGE:
+            dur = min(dur, (_length(path) or dur) - 0.05)  # отрезок не может быть длиннее самого файла
+        if dur < 0.1:
+            continue
+        try:
+            if ext in AUDIO:
+                script.add_track(cc.TrackType.audio, f"sound{k}")
+                script.add_segment(cc.AudioSegment(str(path.resolve()), cc.Timerange(us(ins.at), us(dur))), f"sound{k}")
+            else:
+                script.add_track(cc.TrackType.video, f"insert{k}", relative_index=k + 1)
+                scale = 1.0 if ins.place == "full" else max(0.1, min(1.0, ins.scale))
+                script.add_segment(cc.VideoSegment(
+                    str(path.resolve()), cc.Timerange(us(ins.at), us(dur)),
+                    clip_settings=cc.ClipSettings(scale_x=scale, scale_y=scale,
+                                                  transform_y=PLACE_Y.get(ins.place, 0.0))), f"insert{k}")
+        except Exception as exc:  # одна неудачная вставка не должна срывать весь черновик
+            notes.append(f"{path.name}: {str(exc)[:80]}")
+    if music and Path(music).is_file():
+        try:
+            dur = min(length, _length(Path(music)) or length)
+            script.add_track(cc.TrackType.audio, "music")
+            script.add_segment(cc.AudioSegment(str(Path(music).resolve()), cc.Timerange(0, us(dur)), volume=0.2), "music")
+        except Exception:
+            notes.append(Path(music).name)
     script.save()
+    if notes:
+        (drafts_dir / name / "не_добавлено.txt").write_text("\n".join(notes), encoding="utf-8")
     return drafts_dir / name

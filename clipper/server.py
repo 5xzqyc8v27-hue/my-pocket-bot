@@ -1205,10 +1205,12 @@ def capcut(req: CapcutReq):
     target = target or DATA / "capcut_drafts"
     try:
         path = export_draft(Path(p["video"]), Moment.model_validate(p["moments"][req.moment]),
-                            req.preset, transcript_of(p), target)
+                            req.preset, transcript_of(p), target, resolve=resolve_asset)
     except ImportError:
         raise HTTPException(400, "Не установлена библиотека pycapcut (pip install pycapcut)")
-    return {"path": str(path), "capcut_found": found}
+    skipped = path / "не_добавлено.txt"
+    return {"path": str(path), "capcut_found": found,
+            "skipped": skipped.read_text(encoding="utf-8").splitlines() if skipped.exists() else []}
 
 
 def resolve_asset(ref: str) -> Path:

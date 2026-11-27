@@ -52,7 +52,7 @@ def insert_filters(inserts: list, first_input: int, preset: Preset, last: str) -
 
 def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: str | None,
                  camera: str | None = None, inserts: list | None = None, first_insert: int = 0,
-                 chat_rows: int = 0) -> str:
+                 chat_rows: int = 0, cam_times: list | None = None) -> str:
     """Собирает filter_complex под раскладку. Входы: 0 — исходник, 1 — залипалка, далее баннер."""
     W, H = preset.width, preset.height
     layout = preset.layout
@@ -67,7 +67,8 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
         pre.append(f"eq=brightness={preset.brightness}:contrast={preset.contrast}:saturation={preset.saturation}")
     if preset.speed != 1.0:
         pre.append(f"setpts=PTS/{preset.speed}")
-    parts: list[str] = [f"[0:v]{','.join(pre) or 'null'}[src]"]
+    cam_times = cam_times if cam_times and layout in ("reaction", "chat") else None
+    parts: list[str] = [f"[0:v]{','.join(pre) or 'null'}" + ("[src0];[src0]split=2[src][srcx]" if cam_times else "[src]")]
 
     if layout in ("center", "square"):
         fg = (f"scale={zoom_w}:-2" if layout == "center"
@@ -92,6 +93,9 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
         game = f"scale=iw*{preset.content_zoom}:-2,{_cover(W, H - cam_h)}"
         order = "[cam][game]" if preset.webcam_position == "top" else "[game][cam]"
         parts += ["[src]split=2[a][b]", f"[a]{cam}[cam]", f"[b]{game}[game]", f"{order}vstack[v]"]
+    elif layout == "full":  # без вебки: вертикальный кусок кадра на весь экран
+        zh = _even(H * preset.content_zoom)
+        parts.append(f"[src]scale=-2:{zh},crop={W}:{H}:(iw-{W})*{preset.crop_x}:(ih-{H})/2[v]")
     elif layout == "chat":
         cam_h = _even(H * preset.webcam_share)
         x, y, w, h = preset.webcam
@@ -106,8 +110,14 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
         raise ValueError(f"Неизвестная раскладка: {preset.layout}")
 
     last = "v"
+    if cam_times:  # смена сцены: вебка на весь кадр в громкие моменты
+        x, y, w, h = preset.webcam
+        on = "+".join(f"between(t,{a:.2f},{b:.2f})" for a, b in cam_times)
+        parts += [f"[srcx]crop=iw*{w}:ih*{h}:iw*{x}:ih*{y},{_cover(W, H)}[camfull]",
+                  f"[v][camfull]overlay=0:0:enable='{on}'[vs]"]
+        last = "vs"
     if camera:
-        parts.append(f"[v]fps={preset.fps},{camera}[vc]")
+        parts.append(f"[{last}]fps={preset.fps},{camera}[vc]")
         last = "vc"
     if has_banner:
         idx = 2 if has_filler else 1
@@ -129,7 +139,7 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
 
 def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcript | None,
              filler: Path | None, tmp: Path, camera: str | None = None,
-             inserts: list | None = None) -> list[str]:
+             inserts: list | None = None, cam_times: list | None = None) -> list[str]:
     """Общая часть команды ffmpeg для ролика и для кадра предпросмотра."""
     use_filler = bool(filler) and preset.layout in ("split", "chat")
     banner = Path(preset.banner) if preset.banner else None
@@ -161,7 +171,7 @@ def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcrip
             cmd += ["-t", f"{ins.duration:.3f}"]
         cmd += ["-i", ins.file]
     return cmd + ["-filter_complex", build_filter(preset, use_filler, bool(banner), ass_name, camera,
-                                                  inserts, first, rows)]
+                                                  inserts, first, rows, cam_times)]
 
 
 class _Ins:
@@ -196,9 +206,12 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
         preset = plain
     out_len = moment.duration / preset.speed
     peaks = []
-    if preset.camera in ("punch", "both"):
+    if preset.camera in ("punch", "both") or preset.cam_fullscreen:
         from .moments import loud_peaks
         peaks = [p / preset.speed for p in loud_peaks(source, moment.start, moment.duration)]
+    cam_times = [(max(0.0, p - 0.3), min(out_len, p + 1.5)) for p in peaks[:2]] if preset.cam_fullscreen else None
+    if preset.camera not in ("punch", "both"):
+        peaks = []
     camera = camera_filter(preset, out_len, peaks)
     inserts = []
     for ins in moment.inserts:
@@ -206,7 +219,7 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
         if path.exists() and 0 <= ins.at < out_len:
             inserts.append(_Ins(str(path.resolve()), ins.at, min(ins.duration, out_len - ins.at), ins.place, ins.scale))
     with tempfile.TemporaryDirectory() as tmp:
-        cmd = _prepare(source, moment, preset, transcript, filler, Path(tmp), camera, inserts)
+        cmd = _prepare(source, moment, preset, transcript, filler, Path(tmp), camera, inserts, cam_times)
         first = 1 + int(bool(filler) and preset.layout in ("split", "chat")) + int(bool(preset.banner and Path(preset.banner).exists()))
         sounds = [i for i in inserts if not i.file.lower().endswith(IMAGE_EXT) and has_audio(Path(i.file))]
         main_audio = has_audio(source)

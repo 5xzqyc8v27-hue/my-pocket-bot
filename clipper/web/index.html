@@ -80,15 +80,70 @@ input[type=color]{width:100%;height:30px;padding:0;border:1px solid var(--line);
 .ref{display:grid;grid-template-columns:260px 1fr;gap:14px;margin-bottom:14px}
 .ref img{width:100%;border-radius:8px}
 @media(max-width:800px){.ref{grid-template-columns:1fr}}
+
+/* --- оформление 2: навигация, диалоги, подсказки --- */
+:root{--bg:#0b0d10;--panel:#14171c;--panel2:#1b1f26;--line:#262b34;--mute:#8d96a5;--r:12px}
+body{font-size:14px;-webkit-font-smoothing:antialiased}
+aside{gap:14px;position:sticky;top:0;height:100vh;overflow:auto}
+main{padding:22px 26px;gap:18px;max-width:1500px}
+h1{font-size:19px;font-weight:650;letter-spacing:0}
+main>div:first-child>.mute{margin-top:4px;max-width:900px}
+.card{padding:16px 18px;box-shadow:0 1px 0 rgba(255,255,255,.02) inset}
+.btn{transition:border-color .12s,background .12s,transform .05s}
+.btn:active{transform:translateY(1px)}
+.btn.primary:hover{background:#c8f76a;border-color:#c8f76a}
+nav{display:flex;flex-direction:column;gap:2px}
+nav .grp{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--mute);margin:12px 8px 4px}
+nav button{display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;background:none;border:0;border-left:3px solid transparent;border-radius:0 8px 8px 0;padding:7px 10px;color:var(--mute);cursor:pointer}
+nav button:hover{color:var(--text);background:var(--panel2)}
+nav button.active{color:var(--text);background:var(--panel2);border-left-color:var(--accent);font-weight:600}
+nav .badge{font-size:11px;background:var(--accent);color:var(--accent-ink);border-radius:99px;padding:0 7px;font-weight:700}
+dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:20px;width:min(560px,94vw);max-height:92vh}
+dialog#picker2{width:min(1000px,96vw)}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+.dlg-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+#toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;z-index:50;max-width:380px}
+.toast{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;padding:10px 14px;box-shadow:0 8px 30px rgba(0,0,0,.45);white-space:pre-wrap}
+.toast.bad{border-left-color:var(--bad)}
+.steps{display:flex;gap:6px;flex-wrap:wrap}
+.step{display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:99px;border:1px solid var(--line);color:var(--mute);font-size:13px}
+.step i{font-style:normal;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--panel2);font-size:11px;font-weight:700}
+.step.done{color:var(--text)}.step.done i{background:var(--good);color:#06210f}
+.step.now{color:var(--text);border-color:var(--accent)}.step.now i{background:var(--accent);color:var(--accent-ink)}
+.status{display:flex;align-items:center;gap:10px}
+.spin{width:14px;height:14px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:sp .8s linear infinite;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.spin{animation:none}.btn{transition:none}}
+.swatches{display:flex;gap:6px;flex-wrap:wrap}
+.swatch{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);cursor:pointer;padding:0}
+.swatch.on{border-color:var(--text);outline:2px solid var(--accent);outline-offset:1px}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{flex:1;background:none;border:0;padding:6px 8px;color:var(--mute);cursor:pointer}
+.seg button.on{background:var(--accent);color:var(--accent-ink);font-weight:600}
+#pickStage{position:relative;user-select:none;touch-action:none;line-height:0;overflow:hidden;border-radius:8px;cursor:crosshair}
+#pickImg{width:100%;display:block;pointer-events:none;-webkit-user-drag:none}
+#pickBox{position:absolute;border:2px solid #fff;box-shadow:0 0 0 9999px rgba(0,0,0,.55);cursor:move;border-radius:4px}
+.welcome{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.welcome .card b{display:block;margin-bottom:4px}
+.moment,.proj,.stage{transition:border-color .12s}
+.moment:hover,.proj:hover{border-color:var(--mute)}
+@media(max-width:800px){aside{position:static;height:auto}}
 </style>
 </head>
 <body>
 <div class="app">
   <aside>
     <div class="logo"><i></i><h1>Clipper</h1></div>
-    <div class="tabs" id="nav" style="margin:0"></div>
-    <div class="card">
-      <h2>Новый исходник</h2>
+    <button class="btn primary" id="openNew" style="width:100%">+ Новый исходник</button>
+    <nav id="nav"></nav>
+    <h2 style="margin:6px 0 0">Проекты</h2>
+    <div class="projects" id="projects"></div>
+  </aside>
+  <main id="main"><div class="empty">Загружаю…</div></main>
+</div>
+<dialog id="newSource">
+  <div class="dlg-head"><h1>Новый исходник</h1><button class="btn small" id="closeNew" aria-label="Закрыть">×</button></div>
+  <p class="mute" style="margin:0 0 12px">Ссылка на видео или стрим, путь к файлу на этом компьютере или загрузка файла. Панель расшифрует речь и найдёт сильные моменты.</p>
       <div class="field"><label>Ссылка или путь к файлу</label><input type="text" id="src" placeholder="https://… или /Users/…/video.mp4"></div>
       <div class="field"><label>Или загрузить файл</label><input type="file" id="file" accept="video/*"></div>
       <div class="row">
@@ -103,15 +158,19 @@ input[type=color]{width:100%;height:30px;padding:0;border:1px solid var(--line);
         <select id="whisper"><option value="small">Быстрое (small)</option><option value="medium">Точнее (medium)</option><option value="large-v3">Лучшее (large-v3)</option><option value="off">Выключить</option></select></div>
       <div class="field"><label>Стример (для его материалов)</label><input type="text" id="streamer" list="owners" placeholder="например evelone"><datalist id="owners"></datalist></div>
       <div class="field"><label>Залипалка для сплита (путь, необязательно)</label><input type="text" id="filler" placeholder="/Users/…/loop.mp4"></div>
-      <button class="btn primary" id="add" style="width:100%">Найти моменты</button>
-    </div>
-    <h2 style="margin:0">Проекты</h2>
-    <div class="projects" id="projects"></div>
-  </aside>
-  <main id="main"><div class="empty">Добавьте исходник слева — ссылку или файл.</div></main>
-</div>
+  <button class="btn primary" id="add" style="width:100%">Найти моменты</button>
+</dialog>
+<dialog id="picker2">
+  <div class="dlg-head"><h1 id="pickTitle">Выделите область</h1><button class="btn small" id="pickClose" aria-label="Закрыть">×</button></div>
+  <p class="mute" id="pickHint" style="margin:0 0 10px"></p>
+  <div id="pickStage"><img id="pickImg" alt="Кадр исходника" draggable="false"><div id="pickBox"></div></div>
+  <div class="row" style="margin-top:12px"><span class="mute" id="pickInfo"></span><button class="btn primary" id="pickOk" style="flex:none">Применить</button></div>
+</dialog>
+<div id="toasts" aria-live="polite"></div>
 <script>
 const $ = s => document.querySelector(s);
+function toast(msg, bad) { const el = document.createElement('div'); el.className = 'toast' + (bad ? ' bad' : ''); el.textContent = String(msg); $('#toasts').append(el); setTimeout(() => el.remove(), bad ? 9000 : 5000); }
+window.alert = msg => toast(msg, /ошибк|не удалось|не найден|нужн|сначала|занят|укажите|выберите|отметьте|введите|не установлен/i.test(String(msg)));
 function h(tag, props = {}, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(props)) {
@@ -130,7 +189,9 @@ const PICKERS = {auto: 'Авто (лучший доступный)', claude: 'Cl
 const STATUS = {queued: 'в очереди', download: 'скачивание', transcribe: 'расшифровка', scenes: 'сцены', moments: 'поиск моментов', render: 'монтаж', ready: 'готов', error: 'ошибка'};
 const TABS = {
   'Раскладка': [
-    ['layout', 'Раскладка', 'select', {center: 'Видео по центру', square: 'Квадрат', split: 'Сплит с залипалкой', reaction: 'Вебка + игра', chat: 'Чат + реакция'}],
+    ['layout', 'Раскладка', 'select', {center: 'Видео по центру', square: 'Квадрат', split: 'Сплит с залипалкой', reaction: 'Вебка + игра', chat: 'Чат + реакция', full: 'Без вебки: кадр на весь экран'}],
+    ['crop_x', 'Без вебки: какую часть кадра брать (левее — правее)', 'range', [0, 1, 0.01]],
+    ['cam_fullscreen', 'В громкие моменты разворачивать вебку на весь кадр', 'bool'],
     ['content_zoom', 'Масштаб контента', 'range', [1, 1.6, 0.01]],
     ['background_blur', 'Размытие фона', 'range', [0, 60, 1]],
     ['split_share', 'Доля ролика в сплите', 'range', [0.3, 0.7, 0.01]],
@@ -157,9 +218,10 @@ const TABS = {
     ['subtitle_words', 'Слов на экране', 'range', [1, 6, 1]],
     ['subtitle_upper', 'ЗАГЛАВНЫМИ', 'bool'],
     ['subtitle_pop', 'Слова «выпрыгивают»', 'bool'],
+    ['censor', 'Закрывать мат звёздочками', 'bool'],
     ['subtitle_color', 'Цвет текста', 'color'],
     ['subtitle_highlight', 'Цвет текущего слова', 'color'],
-    ['font', 'Шрифт (имя в системе)', 'text'],
+    ['font', 'Шрифт', 'font'],
   ],
   'Уникализация': [
     ['camera', 'Движение камеры', 'select', {none: 'Нет', push: 'Плавный наезд', punch: 'Резкие наезды на громких местах', both: 'Оба'}],
@@ -185,6 +247,7 @@ const SUB_STYLES = {
   'По слову': {subtitle_color: 'FFE600', subtitle_highlight: 'FFFFFF', subtitle_upper: true, subtitle_words: 1, subtitle_size: 100},
   'Спокойные': {subtitle_color: 'E8EAED', subtitle_highlight: 'FF8AD8', subtitle_upper: false, subtitle_words: 4, subtitle_size: 58},
 };
+let FONTS = [], commonTitle = '';
 let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''}, themeStreamer = '', themeMusic = '', styleCount = 1, hist = {}, histPick = {}, story = {topic: '', script: '', title: '', voice: '', music: '', projects: new Set()}, histOpt = {preset: 'reaction', focus: '', count: 8};
 let view = 'Проект', owner = 'common', kind = 'photos';
 let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: [], themes: {}, theme_status: {}, queue: {}, story_status: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
@@ -198,11 +261,36 @@ function control([key, label, type, opt]) {
   let input, out = h('span', {}, type === 'range' ? v : '');
   if (type === 'select') { input = h('select', {onchange: e => setP(key, e.target.value)}, Object.entries(opt).map(([val, name]) => h('option', {value: val, selected: val === v}, name))); }
   else if (type === 'range') { input = h('input', {type: 'range', min: opt[0], max: opt[1], step: opt[2], value: v, oninput: e => { out.textContent = e.target.value; setP(key, +e.target.value); }}); }
-  else if (type === 'color') { input = h('input', {type: 'color', value: '#' + v, oninput: e => setP(key, e.target.value.slice(1).toUpperCase())}); }
+  else if (type === 'color') { const SW = ['FFFFFF', 'FFE600', 'FFD400', '3DDC4A', '35D0FF', 'FF3DD4', 'A970FF', 'FF5A5A', '000000'];
+    input = h('div', {class: 'swatches'}, SW.map(c => h('button', {class: 'swatch' + (c === v ? ' on' : ''), style: 'background:#' + c, title: '#' + c, 'aria-label': 'Цвет ' + c, onclick: () => { setP(key, c); renderMain(); }})), h('input', {type: 'color', value: '#' + v, title: 'Свой цвет', style: 'width:34px;height:26px', oninput: e => setP(key, e.target.value.slice(1).toUpperCase())})); }
+  else if (type === 'font') { input = h('select', {onchange: e => setP(key, e.target.value)}, [...new Set([v, ...FONTS])].map(f => h('option', {value: f, selected: f === v}, f))); }
   else { input = h('input', {type: 'text', value: v || '', onchange: e => setP(key, e.target.value.trim() || (['banner', 'title_glow'].includes(key) ? null : ''))}); }
   return h('div', {class: 'field'}, h('label', {}, label, out), input);
 }
 
+function openPicker(p) {
+  const dlg = $('#picker2'), img = $('#pickImg'), box = $('#pickBox'), stage = $('#pickStage'), full = preset.layout === 'full';
+  $('#pickTitle').textContent = full ? 'Какую часть кадра брать' : 'Где на кадре вебка';
+  $('#pickHint').textContent = full ? 'Светлая рамка — то, что попадёт в ролик. Перетащите её влево или вправо.' : 'Нарисуйте мышкой прямоугольник вокруг вебки стримера. Готовую рамку можно перетаскивать.';
+  const m = p.moments[mom]; let r = full ? null : {x: preset.webcam[0], y: preset.webcam[1], w: preset.webcam[2], h: preset.webcam[3]}, cx = preset.crop_x;
+  const draw = () => { const W = stage.clientWidth, H = stage.clientHeight;
+    if (full) { const bw = Math.min(W, H * 9 / 16 / preset.content_zoom), bh = H / preset.content_zoom; box.style.cssText = `left:${(W - bw) * cx}px;top:${(H - bh) / 2}px;width:${bw}px;height:${bh}px`; $('#pickInfo').textContent = `Положение: ${Math.round(cx * 100)}%`; }
+    else { box.style.cssText = `left:${r.x * W}px;top:${r.y * H}px;width:${r.w * W}px;height:${r.h * H}px`; $('#pickInfo').textContent = `Вебка: ${Math.round(r.w * 100)}% × ${Math.round(r.h * 100)}% кадра`; } };
+  img.onload = draw; img.src = `/api/projects/${p.id}/frame?at=${m ? (m.start + m.end) / 2 : 5}&_=${Date.now()}`;
+  let drag = null;
+  stage.onpointerdown = e => { const b = stage.getBoundingClientRect(), px = (e.clientX - b.left) / b.width, py = (e.clientY - b.top) / b.height;
+    const inside = !full && px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+    drag = full ? {mode: 'pan'} : inside ? {mode: 'move', dx: px - r.x, dy: py - r.y} : {mode: 'new', x0: px, y0: py}; stage.setPointerCapture(e.pointerId); stage.onpointermove(e); };
+  stage.onpointermove = e => { if (!drag) return; const b = stage.getBoundingClientRect(), px = Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)), py = Math.min(1, Math.max(0, (e.clientY - b.top) / b.height));
+    if (drag.mode === 'pan') cx = px;
+    else if (drag.mode === 'move') { r.x = Math.min(1 - r.w, Math.max(0, px - drag.dx)); r.y = Math.min(1 - r.h, Math.max(0, py - drag.dy)); }
+    else { r = {x: Math.min(px, drag.x0), y: Math.min(py, drag.y0), w: Math.max(0.03, Math.abs(px - drag.x0)), h: Math.max(0.03, Math.abs(py - drag.y0))}; }
+    draw(); };
+  stage.onpointerup = stage.onpointercancel = () => { drag = null; };
+  $('#pickOk').onclick = () => { if (full) preset.crop_x = +cx.toFixed(2); else preset.webcam = [r.x, r.y, r.w, r.h].map(v => +v.toFixed(3)); dlg.close(); renderMain(); };
+  $('#pickClose').onclick = () => dlg.close();
+  dlg.showModal();
+}
 function queuePreview() { clearTimeout(pvTimer); pvTimer = setTimeout(loadPreview, 250); }
 async function loadPreview() {
   const p = S.projects[cur], img = $('#pvimg'), hint = $('#pvhint');
@@ -526,12 +614,20 @@ function renderMain() {
   if (view === 'Материалы') return renderAssets();
   if (view === 'Примеры') return renderRefs();
   const main = $('#main'), p = S.projects[cur];
-  if (!p) { main.replaceChildren(h('div', {class: 'empty'}, 'Добавьте исходник слева — ссылку или файл.')); return; }
+  if (!p) { main.replaceChildren(
+    h('div', {}, h('h1', {}, 'С чего начать'), h('div', {class: 'mute'}, 'Clipper находит сильные моменты в видео и стримах и монтирует из них вертикальные ролики.')),
+    h('div', {class: 'welcome'},
+      h('div', {class: 'card'}, h('b', {}, '1. Проверьте настройку'), h('div', {class: 'mute'}, 'Вкладка «Настройка» покажет, что установлено и чего не хватает.'), h('button', {class: 'btn small', style: 'margin-top:10px', onclick: () => { view = 'Настройка'; renderAll(); }}, 'Открыть настройку')),
+      h('div', {class: 'card'}, h('b', {}, '2. Добавьте исходник'), h('div', {class: 'mute'}, 'Ссылка на видео, файл или запись стрима — панель найдёт моменты.'), h('button', {class: 'btn small primary', style: 'margin-top:10px', onclick: () => $('#newSource').showModal()}, '+ Новый исходник')),
+      h('div', {class: 'card'}, h('b', {}, '3. Или подключите стримера'), h('div', {class: 'mute'}, 'Панель сама будет писать эфиры и монтировать ролики.'), h('button', {class: 'btn small', style: 'margin-top:10px', onclick: () => { view = 'Стримеры'; renderAll(); }}, 'К стримерам')),
+      h('div', {class: 'card'}, h('b', {}, '4. Загрузите материалы'), h('div', {class: 'mute'}, 'Фото стримера, мемы, звуки, музыка, шрифты — для вставок и подборок.'), h('button', {class: 'btn small', style: 'margin-top:10px', onclick: () => { view = 'Материалы'; renderAll(); }}, 'К материалам')))); return; }
   const busy = !['ready', 'error'].includes(p.status);
   const head = h('div', {class: 'row'},
     h('div', {}, h('h1', {}, p.title), h('div', {class: 'mute'}, p.duration ? `${Math.round(p.duration / 60)} мин · ${p.width}×${p.height}` : p.source, p.picker ? ` · моменты выбрал: ${PICKERS[p.picker] || p.picker}` : '')),
     h('div', {style: 'flex:none'}, h('button', {class: 'btn', onclick: async () => { if (confirm('Удалить проект из списка? Файлы роликов останутся на диске.')) { await api('/api/projects/' + p.id, 'DELETE'); cur = null; refresh(); } }}, 'Удалить проект')));
-  const status = h('div', {class: 'status' + (p.status === 'error' ? ' error' : '')}, (STATUS[p.status] || p.status) + ': ' + (p.message || ''), p.warning ? ' · ' + p.warning : '');
+  const stepNow = busy && p.status !== 'render' ? 0 : !p.moments.length ? 0 : !(p.clips || []).length ? (p.status === 'render' ? 2 : 1) : Object.values(S.queue).some(q => q.project === p.id) ? 4 : 3;
+  const steps = h('div', {class: 'steps'}, ['Анализ', 'Моменты и оформление', 'Монтаж', 'Готовые ролики', 'Публикация'].map((t, n) => h('div', {class: 'step' + (n < stepNow ? ' done' : n === stepNow ? ' now' : '')}, h('i', {}, n < stepNow ? '✓' : n + 1), t)));
+  const status = h('div', {class: 'status' + (p.status === 'error' ? ' error' : '')}, busy ? h('span', {class: 'spin'}) : null, h('span', {}, (STATUS[p.status] || p.status) + ': ' + (p.message || '') + (p.warning ? ' · ' + p.warning : '')));
 
   const cats = [...new Set(p.moments.map(m => m.category).filter(Boolean))];
   if (!cats.includes(catFilter)) catFilter = '';
@@ -547,16 +643,19 @@ function renderMain() {
     h('div', {class: 'tabs'}, Object.keys(TABS).map(t => h('button', {class: 'tab' + (t === tab ? ' active' : ''), onclick: () => { tab = t; renderMain(); }}, t))),
     tab === 'Субтитры' && h('div', {class: 'hooks', style: 'margin-bottom:10px'}, Object.entries(SUB_STYLES).map(([n, st]) => h('button', {class: 'btn small', onclick: () => { Object.assign(preset, st); renderMain(); }}, n))),
     tab === 'Уникализация' && h('button', {class: 'btn', style: 'margin-bottom:10px', onclick: async () => { preset = await (await api('/api/presets/random', 'POST', preset)).json(); renderMain(); }}, 'Рандом'),
+    tab === 'Раскладка' && ['reaction', 'chat', 'full'].includes(preset.layout) && h('button', {class: 'btn', style: 'width:100%;margin-bottom:10px', disabled: !p.video, onclick: () => openPicker(p)}, preset.layout === 'full' ? 'Выбрать часть кадра мышкой' : 'Выделить вебку на кадре мышкой'),
+    tab === 'Субтитры' && h('div', {class: 'field'}, h('label', {}, 'Где субтитры'), h('div', {class: 'seg'}, [['Сверху', 0.2], ['По центру', 0.5], ['Снизу', 0.74]].map(([n, y]) => h('button', {class: Math.abs(preset.subtitle_y - y) < 0.06 ? 'on' : '', onclick: () => { preset.subtitle_y = y; renderMain(); }}, n)))),
     TABS[tab].map(control));
 
   const pv = h('div', {class: 'card pv'}, h('h2', {}, 'Предпросмотр'),
     h('div', {class: 'preview'}, h('img', {id: 'pvimg', hidden: true, alt: 'Кадр ролика'}), h('div', {class: 'hint', id: 'pvhint'}, p.moments.length ? 'Загружаю кадр…' : 'Появится, когда найдутся моменты')),
     h('div', {class: 'field', style: 'margin-top:8px'}, h('label', {}, 'Момент ролика'), h('input', {type: 'range', min: 0, max: 0.98, step: 0.02, value: at, oninput: e => { at = +e.target.value; queuePreview(); }})),
+    h('div', {class: 'field'}, h('label', {}, 'Одна надпись для всех роликов (необязательно)'), h('input', {type: 'text', value: commonTitle, placeholder: 'Пусто — у каждого ролика свой хук', oninput: e => { commonTitle = e.target.value; }})),
     h('label', {class: 'check', title: 'Каждый ролик получит свою вариацию: положение и стиль текста, камера, скорость, цвет'}, h('input', {type: 'checkbox', checked: varyOn, onchange: e => { varyOn = e.target.checked; }}), 'Разнообразить ролики'),
     h('div', {class: 'field'}, h('label', {}, 'Стилей на каждый момент'), h('select', {title: 'Тот же момент дополнительно монтируется в других пресетах', onchange: e => { styleCount = +e.target.value; }}, [1, 2, 3, 4].map(n => h('option', {value: n, selected: n === styleCount}, n === 1 ? 'Один (выбранный пресет)' : n + ' разных стиля')))),
     h('button', {class: 'btn primary', id: 'renderBtn', style: 'width:100%', disabled: busy || !p.moments.length, onclick: async () => {
       const list = picked.size ? [...picked] : p.moments.map((_, i) => i);
-      try { await api('/api/render', 'POST', {project: p.id, moments: list, preset, vary: varyOn && list.length > 1, styles: styleCount}); refresh(); } catch (e) { alert(e.message); } }}, 'Смонтировать все'),
+      try { await api('/api/render', 'POST', {project: p.id, moments: list, preset, vary: varyOn && list.length > 1, styles: styleCount, common_title: commonTitle}); refresh(); } catch (e) { alert(e.message); } }}, 'Смонтировать все'),
     h('button', {class: 'btn', style: 'width:100%;margin-top:8px', disabled: busy || !p.moments.length, title: 'Создать проект CapCut с этим моментом, хуком и субтитрами', onclick: async () => {
       try { const r = await (await api('/api/capcut', 'POST', {project: p.id, moment: mom, preset})).json();
         alert(r.capcut_found ? 'Черновик создан — откройте CapCut, он появится в списке проектов.' : 'CapCut на этом компьютере не найден. Черновик сохранён в папку:\n' + r.path); } catch (e) { alert(e.message); } }}, 'Открыть момент в CapCut'));
@@ -581,11 +680,15 @@ function renderMain() {
       topTitle = h('input', {type: 'text', placeholder: 'Заголовок, например: Топ 5 смешных моментов в GTA', value: p.topTitle || '', oninput: e => { p.topTitle = e.target.value; }}),
       topPhoto = h('select', {style: 'flex:0 0 200px', title: 'Фото внизу кадра — из материалов стримера'}, h('option', {value: ''}, photos.length ? 'Без фото' : 'Фото: загрузите в «Материалы»'), photos.map(n => h('option', {value: n}, n))),
       h('button', {class: 'btn primary', style: 'flex:none', disabled: busy, onclick: async () => { try { await api('/api/top', 'POST', {project: p.id, moments: [...picked], title: topTitle.value, preset, photo: topPhoto.value}); refresh(true); } catch (e) { alert(e.message); } }}, 'Собрать топ')));
-  main.replaceChildren(head, status, h('div', {class: 'work'}, moments, editor, pv), top, clips);
+  main.replaceChildren(head, steps, status, h('div', {class: 'work'}, moments, editor, pv), top, clips);
   updateRenderBtn(); queuePreview();
 }
 
-function renderNav() { $('#nav').replaceChildren(...['Стримеры', 'Проект', 'Подборки', 'Рассказ', 'Публикация', 'Тренды', 'Материалы', 'Примеры', 'Аккаунты', 'Настройка'].map(v => h('button', {class: 'tab' + (v === view ? ' active' : ''), onclick: () => { view = v; renderAll(); }}, v)));
+const NAV = [['Работа', ['Стримеры', 'Проект', 'Подборки', 'Рассказ']], ['Выпуск', ['Публикация', 'Аккаунты']], ['Идеи', ['Тренды', 'Примеры']], ['База', ['Материалы', 'Настройка']]];
+function renderNav() {
+  const now = Date.now() / 1000;
+  const badges = {'Стримеры': Object.values(S.streamers).filter(x => x.live).length, 'Публикация': Object.values(S.queue).filter(q => q.status === 'scheduled' && q.when <= now).length};
+  $('#nav').replaceChildren(...NAV.flatMap(([g, items]) => [h('div', {class: 'grp'}, g), ...items.map(v => h('button', {class: v === view ? 'active' : '', onclick: () => { view = v; renderAll(); }}, v, badges[v] ? h('span', {class: 'badge', title: v === 'Стримеры' ? 'в эфире' : 'пора выкладывать'}, badges[v]) : null))]));
   $('.logo h1').textContent = 'Clipper' + (S.profile ? ' · ' + S.profile : '');
   $('#owners').replaceChildren(...Object.keys(S.assets).filter(o => o !== 'common').map(o => h('option', {value: o}))); }
 function renderAll() { renderNav(); renderProjects(); renderMain(); }
@@ -598,6 +701,8 @@ async function refresh(force) {
   const sig = JSON.stringify([S.projects, S.presets.map(p => p.name), cur, S.assets, S.references, S.watch, S.accounts, S.fetching, S.themes, S.theme_status, S.queue, S.story_status, Object.values(S.streamers).map(x => ({...x, last_check: 0}))]);
   if (force || sig !== lastSig && !document.activeElement.matches('main input, main select, main textarea')) { lastSig = sig; renderAll(); }
 }
+$('#openNew').onclick = () => $('#newSource').showModal();
+$('#closeNew').onclick = () => $('#newSource').close();
 $('#add').onclick = async () => {
   const btn = $('#add'); btn.disabled = true;
   try {
@@ -605,10 +710,11 @@ $('#add').onclick = async () => {
     if (f) { btn.textContent = 'Загружаю файл…'; source = (await (await fetch('/api/upload?name=' + encodeURIComponent(f.name), {method: 'PUT', body: f})).json()).path; }
     if (!source) throw new Error('Укажите ссылку, путь или выберите файл');
     const r = await (await api('/api/projects', 'POST', {source, picker: $('#picker').value, count: +$('#count').value, min: +$('#min').value, max: +$('#max').value, whisper: $('#whisper').value, filler: $('#filler').value, streamer: $('#streamer').value, focus: $('#focus').value})).json();
-    cur = r.id; mom = 0; picked = new Set(); $('#src').value = ''; $('#file').value = ''; await refresh();
+    cur = r.id; mom = 0; picked = new Set(); view = 'Проект'; $('#src').value = ''; $('#file').value = ''; $('#newSource').close(); await refresh(true);
   } catch (e) { alert(e.message); }
   btn.disabled = false; btn.textContent = 'Найти моменты';
 };
+api('/api/fonts').then(r => r.json()).then(f => { FONTS = f; }).catch(() => {});
 refresh(); setInterval(refresh, 2000);
 </script>
 </body>

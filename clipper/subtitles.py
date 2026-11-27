@@ -21,6 +21,19 @@ Format: Layer, Start, End, Style, Text
 """
 
 
+import re
+
+MAT = re.compile(r"(ху[йяеёию]|пизд|бля|[её]б[аеиоуыл]|[её]бн|сук[аиу]|муда|залуп|пид[оа]р|гандон|шлюх|долбо[её]б)", re.I)
+
+
+def censor_word(word: str) -> str:
+    """Матерное слово -> первая буква и звёздочки, знаки препинания сохраняются."""
+    if not MAT.search(word.replace("ё", "е").replace("Ё", "Е")) and not MAT.search(word):
+        return word
+    core = re.sub(r"[^\w]", "", word)
+    return word.replace(core, core[0] + "*" * (len(core) - 1), 1) if len(core) > 1 else word
+
+
 def ass_color(rgb: str) -> str:
     """RRGGBB -> формат ASS (&H00BBGGRR)."""
     rgb = rgb.lstrip("#")
@@ -99,7 +112,8 @@ def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
                 start, end = max(0.0, start), min(clip_len, end)
                 if end - start < 0.02:
                     continue
-                texts = [_escape(g.text.upper() if preset.subtitle_upper else g.text) for g in group]
+                shown = [censor_word(g.text) if preset.censor else g.text for g in group]
+                texts = [_escape(t.upper() if preset.subtitle_upper else t) for t in shown]
                 parts = [f"{{\\c{hi}&}}{t}{{\\c{base}&}}" if k == j else t for k, t in enumerate(texts)]
                 lines.append(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Sub,{pos}{' '.join(parts)}")
     return out + "\n".join(lines) + "\n"

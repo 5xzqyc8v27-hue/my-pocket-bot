@@ -195,7 +195,8 @@ def analyze_job(pid: str, opts: dict) -> None:
         set_status(p, "error", str(exc)[:500])
 
 
-def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False, styles: int = 1) -> None:
+def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False, styles: int = 1,
+               common_title: str = "") -> None:
     p = state["projects"][pid]
     video, tr = Path(p["video"]), transcript_of(p)
     out_dir = DATA / "clips" / pid
@@ -209,6 +210,8 @@ def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False,
             indexes = [j[0] for j in jobs]
         for n, (i, chosen) in enumerate(jobs, 1):
             m = Moment.model_validate(p["moments"][i])
+            if common_title.strip():
+                m.title = common_title.strip()
             preset = vary(chosen, seed=int(time.time() * 1000) + n) if (varied or chosen is not base) else chosen
             set_status(p, "render", f"Монтирую {n} из {len(indexes)}: {m.title or 'без названия'}")
             name = f"{int(m.start):05d}_{slug(m.title)}_{preset.name}_{uuid.uuid4().hex[:4]}.mp4"
@@ -265,6 +268,7 @@ class RenderReq(BaseModel):
     preset: Preset
     vary: bool = False
     styles: int = 1  # сколько разных стилей сделать из каждого момента
+    common_title: str = ""  # одна надпись для всех роликов пачки
 
 
 @app.get("/")
@@ -390,6 +394,35 @@ def preview(req: PreviewReq):
     return FileResponse(out, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/projects/{pid}/frame")
+def source_frame(pid: str, at: float = 0.0):
+    """Чистый кадр исходника — на нём мышкой выделяют вебку или часть кадра."""
+    p = project(pid)
+    if not p.get("video"):
+        raise HTTPException(400, "Видео ещё не готово")
+    out = DATA / "preview" / f"{pid}_src.jpg"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    t = max(0.0, min(at, p.get("duration", 0) - 0.5))
+    proc = subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{t:.2f}", "-i", p["video"], "-frames:v", "1",
+                           "-vf", "scale=960:-2", "-q:v", "4", str(out)], capture_output=True)
+    if proc.returncode != 0 or not out.exists():
+        raise HTTPException(400, "Не удалось получить кадр")
+    return FileResponse(out, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/fonts")
+def fonts():
+    """Шрифты, установленные в системе, плюс загруженные в материалы."""
+    names = set()
+    if shutil.which("fc-list"):
+        out = subprocess.run(["fc-list", ":", "family"], capture_output=True, text=True).stdout
+        names |= {line.split(",")[0].strip() for line in out.splitlines() if line.strip()}
+    for folder in ("/System/Library/Fonts", "/Library/Fonts", str(Path.home() / "Library/Fonts")):
+        if Path(folder).is_dir():
+            names |= {f.stem for f in Path(folder).glob("*.[to]tf")}
+    return sorted(n for n in names if n and not n.startswith("."))[:400] or ["Arial", "Helvetica", "Impact"]
+
+
 @app.post("/api/presets")
 def save_preset(preset: Preset):
     preset.name = slug(preset.name, "preset")
@@ -419,7 +452,8 @@ def render(req: RenderReq):
     if bad or not req.moments:
         raise HTTPException(400, "Выберите моменты для монтажа")
     set_status(p, "render", "Запускаю монтаж…")
-    threading.Thread(target=render_job, args=(req.project, req.moments, req.preset, req.vary, max(1, min(req.styles, 5))), daemon=True).start()
+    threading.Thread(target=render_job, args=(req.project, req.moments, req.preset, req.vary, max(1, min(req.styles, 5)), req.common_title),
+                     daemon=True).start()
     return {"ok": True}
 
 

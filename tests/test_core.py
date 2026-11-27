@@ -94,3 +94,10 @@ def test_schedule_slots_spread_and_skip_taken():
     hours = [time.localtime(s).tm_hour for s in slots]
     assert hours == [13, 19, 13] and time.localtime(slots[2]).tm_mday == 28
     assert next_slots([slots[0]], 1, 2, 10, 22, now)[0] == slots[1]
+
+
+def test_censor_keeps_punctuation_and_clean_words():
+    from clipper.subtitles import censor_word
+    assert censor_word("блять,") == "б****,"
+    assert censor_word("привет") == "привет"
+    assert censor_word("Нахуй!") == "Н****!"

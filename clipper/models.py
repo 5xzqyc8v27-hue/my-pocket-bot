@@ -88,7 +88,7 @@ class Moment(BaseModel):
 
 
 class Preset(BaseModel):
-    """Оформление ролика. Раскладки: split, center, square, reaction, chat."""
+    """Оформление ролика. Раскладки: split, center, square, reaction, chat, full."""
 
     name: str = "center"
     layout: str = "center"
@@ -103,6 +103,8 @@ class Preset(BaseModel):
     split_share: float = 0.5
     background_blur: int = 30
     content_zoom: float = 1.0
+    crop_x: float = 0.5  # раскладка full: какую часть кадра брать по горизонтали (0 — левый край, 1 — правый)
+    cam_fullscreen: bool = False  # на самых громких местах вебка на пару секунд разворачивается на весь кадр
     # надпись-хук
     title: bool = True
     title_size: int = 64
@@ -119,6 +121,7 @@ class Preset(BaseModel):
     subtitle_y: float = 0.72
     subtitle_words: int = 3
     subtitle_upper: bool = False
+    censor: bool = False  # закрывать мат звёздочками в субтитрах
     subtitle_pop: bool = False  # каждое слово «выпрыгивает»
     watermark: str = ""  # ник мелким текстом поверх кадра
     watermark_y: float = 0.86

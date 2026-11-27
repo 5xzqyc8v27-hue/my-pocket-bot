@@ -1,4 +1,6 @@
-"""Импорт пака монтажёра из общей папки Google Диска или Яндекс Диска: файлы раскладываются по разделам материалов."""
+"""Импорт пака монтажёра из общей папки Google Диска или Яндекс Диска: файлы раскладываются по разделам материалов.
+
+Zip-архивы внутри пака распаковываются; программы, пресеты After Effects и файлы крупнее 80 МБ пропускаются."""
 from __future__ import annotations
 
 import os
@@ -41,6 +43,8 @@ def classify(path: str) -> str | None:
         return None
     if any(skip in low for skip in ("софт", "плагин", "инструмент", "3d ", "/3d")):
         return None  # программы и пресеты After Effects панели не нужны
+    if ext == ".zip":
+        return "zip"  # архив распаковывается при импорте, его файлы раскладываются по тем же правилам
     if ext in FONT:
         return "fonts"
     if ext == ".cube":
@@ -134,7 +138,7 @@ def list_pack(url: str) -> list[dict]:
     return rows
 
 
-def fetch_file(file_id: str, target: Path, yandex: str = "") -> bool:
+def fetch_file(file_id: str, target: Path, yandex: str = "", limit: int = MAX_FILE) -> bool:
     """Скачивает один файл с Диска по прямому адресу. False — не удалось (нет доступа, лимит Диска)."""
     import urllib.error
     import urllib.request
@@ -146,8 +150,14 @@ def fetch_file(file_id: str, target: Path, yandex: str = "") -> bool:
         with urllib.request.urlopen(url, timeout=600) as resp, open(tmp, "wb") as out:
             if "text/html" in resp.headers.get("Content-Type", ""):
                 return False  # вместо файла пришла страница: доступ закрыт или превышен лимит скачиваний
+            if int(resp.headers.get("Content-Length") or 0) > limit:
+                return False  # слишком большой файл — это исходник, а не материал для вставок
+            size = 0
             while chunk := resp.read(1 << 20):
                 out.write(chunk)
+                size += len(chunk)
+                if size > limit:
+                    return False
         if tmp.stat().st_size == 0:
             return False
         tmp.replace(target)
@@ -172,11 +182,72 @@ def compact_emoji(src: Path, target: Path) -> bool:
     return ok
 
 
+def unpack_zip(archive: Path, assets_dir: Path, owner: str, kinds: list[str]) -> int:
+    """Раскладывает файлы архива по разделам материалов. Программы и прочее лишнее пропускаются."""
+    import zipfile
+    added = 0
+    with zipfile.ZipFile(archive) as z:
+        for item in z.infolist():
+            if item.is_dir() or item.file_size > MAX_FILE:
+                continue
+            name = item.filename
+            try:  # русские имена в архивах часто записаны в старой кодировке
+                name = name.encode("cp437").decode("utf-8")
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                pass
+            kind = classify(name)
+            if kind in (None, "zip"):
+                continue
+            target = assets_dir / owner / kind / target_name(name)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.exists():
+                with z.open(item) as src, open(target, "wb") as dst:
+                    while chunk := src.read(1 << 20):
+                        dst.write(chunk)
+            if kind == "memes" and is_sticker(target):  # короткий квадратный ролик на зелёном фоне — это эмодзи
+                kind, moved = "emoji", assets_dir / owner / "emoji" / target.name
+                moved.parent.mkdir(parents=True, exist_ok=True)
+                target.replace(moved)
+            if kind in kinds:
+                added += 1
+            else:
+                (assets_dir / owner / kind / target_name(name)).unlink(missing_ok=True)
+    return added
+
+
+def is_sticker(video: Path) -> bool:
+    """Анимированный эмодзи: квадратный ролик до 6 секунд на сплошном зелёном или синем фоне."""
+    import subprocess
+    from .render import screen_key
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                              "stream=width,height:format=duration", "-of", "csv=p=0", str(video)],
+                             capture_output=True, text=True, timeout=30).stdout.split()
+        w, h = (int(x) for x in out[0].split(",")[:2])
+        return abs(w - h) <= 8 and float(out[1]) <= 6 and bool(screen_key(video))
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return False
+
+
 def import_pack(url: str, assets_dir: Path, owner: str, kinds: list[str], progress=None, limit: int = 1500) -> dict:
     """Скачивает выбранные разделы пака в материалы. Уже скачанные файлы пропускаются."""
-    rows = [r for r in list_pack(url) if r["kind"] in kinds][:limit]
+    rows = [r for r in list_pack(url) if r["kind"] in kinds or r["kind"] == "zip"][:limit]
     done = skipped = failed = 0
     for n, r in enumerate(rows, 1):
+        if r["kind"] == "zip":
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmp:
+                archive = Path(tmp) / "pack.zip"
+                if progress:
+                    progress(n, len(rows), f"архив {r['name']} — скачиваю и распаковываю")
+                if fetch_file(r["id"], archive, r.get("yandex", ""), limit=3 << 30):
+                    try:
+                        done += unpack_zip(archive, assets_dir, owner, kinds)
+                    except Exception:
+                        failed += 1
+                else:
+                    failed += 1
+            continue
         target = assets_dir / owner / r["kind"] / r["name"]
         shrink = r["kind"] == "emoji" and target.suffix == ".mov"
         final = target.with_suffix(".webm") if shrink else target

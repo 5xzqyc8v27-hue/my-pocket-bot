@@ -1849,7 +1849,7 @@ async def on_error(_: Request, exc: Exception):
 SAMPLE_TITLES = {
     "kalatay_mem_zadacha_na_raund": "Kalatay · мем: Задача на раунд", "kalatay_mem_neibor_i_mama": "Kalatay · мем: Нейбор и мама",
     "kalatay_mem_rozbyv_monitor": "Kalatay · мем: Розбив монітор", "kalatay_mem_biy_z_tinnyu": "Kalatay · мем: Бій з тінню",
-    "kalatay_format_baner_upg": "Kalatay · формат «банер» UPG", "kalatay_vebka_i_igra": "Kalatay · вебка + игра",
+    "kalatay_format_baner_upg": "Kalatay · формат «банер» UPG", "kalatay_vebka_i_igra": "Kalatay · вебка + игра", "kalatay_format_vebka_plashka": "Kalatay · формат «вебка» с плашкой",
     "spokoinaya_narezka": "Спокойная нарезка", "reklamnaya_pauza_demo": "Рекламная пауза (проба)",
     "cvetokor_glitch_emoji_demo": "Цветокор, глитч, эмодзи (проба)", "demo1_neon": "Неон (проба)",
     "demo2_classic": "Классика (проба)", "demo3_top": "ТОП (проба)", "demo4_stutter": "Двойной наезд на запинке (проба)"}

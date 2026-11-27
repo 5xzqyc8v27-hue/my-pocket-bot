@@ -303,3 +303,19 @@ def test_uniq_command_and_collect(tmp_path):
     assert "-filter_complex" in cmd and "-an" in cmd and "overlay" in cmd[cmd.index("-filter_complex") + 1]
     (tmp_path / "v1.mp4").write_bytes(b"x"); (tmp_path / "n.txt").write_bytes(b"x")
     assert [f.name for f in looks.collect_videos([str(tmp_path)])] == ["v1.mp4"]
+
+
+def test_zip_pack_and_bottom_plate(tmp_path):
+    import zipfile
+    from clipper import packs
+    from clipper.models import Preset
+    from clipper.render import build_filter
+    arc = tmp_path / "p.zip"
+    with zipfile.ZipFile(arc, "w") as z:
+        z.writestr("font.ttf", b"x"); z.writestr("boom.mp3", b"x"); z.writestr("CapCut.apk", b"x"); z.writestr("a/b.cube", b"x")
+    assert packs.classify("Montage Pack.zip") == "zip"
+    assert packs.unpack_zip(arc, tmp_path / "assets", "common", ["fonts", "sounds"]) == 2
+    got = sorted(f.name for f in (tmp_path / "assets").rglob("*") if f.is_file())
+    assert got == ["boom.mp3", "font.ttf"]
+    g = build_filter(Preset(name="t", layout="reaction", banner_mode="bottom"), False, True, None, plate_h=340)
+    assert "vstack=inputs=3" in g and "overlay=(W-w)/2:H*" not in g

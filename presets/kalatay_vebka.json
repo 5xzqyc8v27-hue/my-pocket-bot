@@ -1,0 +1,21 @@
+{
+  "name": "kalatay_vebka",
+  "layout": "reaction",
+  "auto_face": false,
+  "webcam": [
+    0.585,
+    0.6,
+    0.415,
+    0.4
+  ],
+  "game_area": "0.42,0,0.58,0.57",
+  "webcam_share": 0.36,
+  "title": false,
+  "subtitles": true,
+  "subtitle_y": 0.62,
+  "subtitle_size": 64,
+  "censor": true,
+  "banner": "common/banners/kick_kalatay3_plashka.png",
+  "banner_mode": "bottom",
+  "camera": "none"
+}

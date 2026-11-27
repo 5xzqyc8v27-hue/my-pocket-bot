@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .media import run
+from .media import probe, run
 from .top import has_audio
 from .models import Moment, Preset, Transcript
 from .subtitles import build_ass, chat_lines
@@ -79,7 +79,8 @@ def insert_filters(inserts: list, first_input: int, preset: Preset, last: str) -
 
 def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: str | None,
                  camera: str | None = None, inserts: list | None = None, first_insert: int = 0,
-                 chat_rows: int = 0, cam_times: list | None = None, lut_name: str | None = None) -> str:
+                 chat_rows: int = 0, cam_times: list | None = None, lut_name: str | None = None,
+                 plate_h: int = 0) -> str:
     """Собирает filter_complex под раскладку. Входы: 0 — исходник, 1 — залипалка, далее баннер."""
     W, H = preset.width, preset.height
     layout = preset.layout
@@ -124,14 +125,20 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
         cam = f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y},{_cover(W, cam_h)}"
         side = 1.0 if x + w / 2 < 0.35 else 0.0 if x + w / 2 > 0.65 else 0.5  # игру берём подальше от вебки
         area = _area(preset.game_area)
+        game_h = H - cam_h - plate_h  # под игрой может стоять плашка канала
         if area:  # в кадре несколько окон — берём только окно с игрой
             gx, gy, gw, gh = area
-            game = f"crop=iw*{gw}:ih*{gh}:iw*{gx}:ih*{gy},scale=iw*{preset.content_zoom}:-2,{_cover(W, H - cam_h)}"
+            game = f"crop=iw*{gw}:ih*{gh}:iw*{gx}:ih*{gy},scale=iw*{preset.content_zoom}:-2,{_cover(W, game_h)}"
         else:
-            game = (f"scale=iw*{preset.content_zoom}:-2,scale={W}:{H - cam_h}:force_original_aspect_ratio=increase,"
-                    f"crop={W}:{H - cam_h}:(iw-{W})*{side}:(ih-{H - cam_h})/2")
+            game = (f"scale=iw*{preset.content_zoom}:-2,scale={W}:{game_h}:force_original_aspect_ratio=increase,"
+                    f"crop={W}:{game_h}:(iw-{W})*{side}:(ih-{game_h})/2")
         order = "[cam][game]" if preset.webcam_position == "top" else "[game][cam]"
-        parts += ["[src]split=2[a][b]", f"[a]{cam}[cam]", f"[b]{game}[game]", f"{order}vstack[v]"]
+        parts += ["[src]split=2[a][b]", f"[a]{cam}[cam]", f"[b]{game}[game]"]
+        if plate_h:
+            idx = 2 if has_filler else 1
+            parts += [f"[{idx}:v]scale={W}:{plate_h},setsar=1[plate]", f"{order}[plate]vstack=inputs=3[v]"]
+        else:
+            parts.append(f"{order}vstack[v]")
     elif layout == "full":  # без вебки: вертикальный кусок кадра на весь экран
         zh = _even(H * preset.content_zoom)
         parts.append(f"[src]scale=-2:{zh},crop={W}:{H}:(iw-{W})*{preset.crop_x}:(ih-{H})/2[v]")
@@ -158,7 +165,7 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
     if camera:
         parts.append(f"[{last}]fps={preset.fps},{camera}[vc]")
         last = "vc"
-    if has_banner:
+    if has_banner and not plate_h:
         idx = 2 if has_filler else 1
         bw = _even(W * preset.banner_width)
         parts += [f"[{idx}:v]scale={bw}:-2[bn]",
@@ -194,9 +201,18 @@ def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcrip
             lut_name = "look.cube"
             shutil.copyfile(lut, tmp / lut_name)
     use_filler = bool(filler) and preset.layout in ("split", "chat")
-    banner = Path(preset.banner) if preset.banner else None
+    banner = (Path(resolve(preset.banner)) if resolve else Path(preset.banner)) if preset.banner else None
     if banner and not banner.exists():
         banner = None
+    plate_h = 0
+    if banner and preset.banner_mode == "bottom" and preset.layout == "reaction":
+        try:  # у картинки нет длительности, поэтому размеры спрашиваем отдельно
+            w, h = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                   "stream=width,height", "-of", "csv=p=0", str(banner)],
+                                  capture_output=True, text=True, timeout=30).stdout.strip().split(",")[:2]
+            plate_h = _even(preset.width * int(h) / int(w))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            plate_h = 0
     words = transcript.words_between(moment.start, moment.end) if transcript else []
     chat = (moment.chat_user, moment.chat_text) if moment.chat_text.strip() else None
     rows = len(chat_lines(*chat, preset)) if chat and preset.layout == "chat" else 0
@@ -221,7 +237,7 @@ def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcrip
     elif use_filler:
         cmd += ["-stream_loop", "-1", "-i", str(Path(filler).resolve())]
     if banner:
-        cmd += ["-i", str(banner.resolve())]
+        cmd += (["-loop", "1", "-t", f"{moment.duration:.3f}"] if plate_h else []) + ["-i", str(banner.resolve())]
     first = 1 + int(use_filler) + int(bool(banner))
     for k, ins in enumerate(inserts or []):
         ins.index = k
@@ -235,7 +251,7 @@ def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcrip
             cmd += ["-t", f"{ins.duration:.3f}"]
         cmd += ["-i", ins.file]
     return cmd + ["-filter_complex", build_filter(preset, use_filler, bool(banner), ass_name, camera,
-                                                  inserts, first, rows, cam_times, lut_name)]
+                                                  inserts, first, rows, cam_times, lut_name, plate_h)]
 
 
 class _Ins:
@@ -331,7 +347,7 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
             inserts.append(_Ins(str(path.resolve()), ins.at, min(ins.duration, out_len - ins.at), ins.place, ins.scale))
     with tempfile.TemporaryDirectory() as tmp:
         cmd = _prepare(source, moment, preset, transcript, filler, Path(tmp), camera, inserts, cam_times, fonts, resolve)
-        first = 1 + int(bool(filler) and preset.layout in ("split", "chat")) + int(bool(preset.banner and Path(preset.banner).exists()))
+        first = 1 + int(bool(filler) and preset.layout in ("split", "chat")) + int(bool(preset.banner and (Path(resolve(preset.banner)) if resolve else Path(preset.banner)).exists()))
         sounds = [i for i in inserts if not i.file.lower().endswith(IMAGE_EXT) and has_audio(Path(i.file))]
         main_audio = has_audio(source)
         if sounds:  # звук вставок подмешиваем к основной дорожке в нужный момент

@@ -161,6 +161,7 @@ class Preset(BaseModel):
     # баннер / водяной знак (png) поверх кадра
     banner: str | None = None
     banner_y: float = 0.9
+    banner_mode: str = "overlay"  # overlay — поверх кадра; bottom — плашкой под игрой в раскладке «вебка + игра»
     banner_width: float = 0.5
 
     @classmethod

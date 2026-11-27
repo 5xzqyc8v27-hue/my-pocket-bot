@@ -7,3 +7,4 @@ fastapi
 uvicorn
 pycapcut
 streamlink
+opencv-python-headless>=4.8,<5

@@ -104,6 +104,7 @@ class Preset(BaseModel):
     background_blur: int = 30
     content_zoom: float = 1.0
     crop_x: float = 0.5  # раскладка full: какую часть кадра брать по горизонтали (0 — левый край, 1 — правый)
+    auto_face: bool = True  # умный кроп: вебка и положение кадра определяются по лицу автоматически
     cam_fullscreen: bool = False  # на самых громких местах вебка на пару секунд разворачивается на весь кадр
     # надпись-хук
     title: bool = True

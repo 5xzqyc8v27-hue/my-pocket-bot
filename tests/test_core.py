@@ -116,3 +116,13 @@ def test_reach_verdict_and_ip_parse():
     ip = parse_ip({"status": "success", "query": "1.2.3.4", "country": "X", "isp": "Host Ltd", "hosting": True})
     assert ip["level"] == "bad" and "дата-центра" in ip["verdict"]
     assert parse_ip({"status": "success", "query": "5.6.7.8", "isp": "Home ISP", "mobile": False})["level"] == "ok"
+
+
+def test_webcam_rect_from_face_snaps_to_edges():
+    from clipper.face import apply_face, webcam_rect
+    face = {"cx": 0.153, "cy": 0.833, "w": 0.095, "h": 0.169, "stable": 0.8}
+    x, y, w, h = webcam_rect(face)
+    assert x == 0 and abs(y + h - 1) < 1e-6 and 0.25 < w < 0.4 and 0.35 < h < 0.5
+    assert apply_face(Preset(layout="reaction"), face).webcam == (x, y, w, h)
+    assert apply_face(Preset(layout="reaction", auto_face=False), face).webcam == Preset().webcam
+    assert apply_face(Preset(layout="center"), face).webcam == Preset().webcam

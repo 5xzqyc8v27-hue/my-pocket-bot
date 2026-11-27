@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from .analysis import detect_scenes, uniqueness
 from .capcut import default_drafts_dir, export_draft
+from .face import apply_face, find_face
 from . import health as health_mod
 from . import history, llm
 from . import story as story_mod
@@ -163,7 +164,11 @@ def analyze_job(pid: str, opts: dict) -> None:
                 p["warning"] = "faster-whisper не установлен — без субтитров и выбора по смыслу"
             except Exception as exc:  # распознавание не должно ронять весь анализ
                 p["warning"] = f"Речь не распозналась ({str(exc)[:120]}) — без субтитров"
-        set_status(p, "scenes", "Ищу смены сцен…")
+        set_status(p, "scenes", "Ищу лицо стримера и смены сцен…")
+        try:
+            p["face"] = find_face(video, 0, min(info["duration"], 600))
+        except Exception:
+            p["face"] = None
         p["scenes"] = detect_scenes(video)
         set_status(p, "moments", "Ищу сильные моменты…")
         moments, used = pick(video, tr, opts["picker"], opts["count"], opts["min"], opts["max"],
@@ -214,6 +219,7 @@ def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False,
             if common_title.strip():
                 m.title = common_title.strip()
             preset = vary(chosen, seed=int(time.time() * 1000) + n) if (varied or chosen is not base) else chosen
+            preset = apply_face(preset, p.get("face"))
             set_status(p, "render", f"Монтирую {n} из {len(indexes)}: {m.title or 'без названия'}")
             name = f"{int(m.start):05d}_{slug(m.title)}_{preset.name}_{uuid.uuid4().hex[:4]}.mp4"
             render_clip(video, m, preset, out_dir / name, tr, filler_of(p, preset, m), resolve=resolve_asset)
@@ -316,6 +322,7 @@ def health():
          False, "Установить Claude Code, запустить claude и выполнить /login"),
         ("Ollama", "Локальная нейросеть, бесплатно", ollama_available(), False,
          "brew install ollama && ollama serve && ollama pull qwen2.5:7b"),
+        ("OpenCV", "Умный кроп по лицу", lib("cv2"), False, 'pip install "opencv-python-headless<5"'),
         ("pycapcut", "Экспорт в CapCut", lib("pycapcut"), False, "pip install pycapcut"),
         ("CapCut", "Папка проектов CapCut найдена", default_drafts_dir() is not None, False,
          "Установить CapCut и один раз создать в нём любой проект"),
@@ -388,11 +395,28 @@ def preview(req: PreviewReq):
         raise HTTPException(400, "Видео ещё не готово")
     m = Moment.model_validate(p["moments"][req.moment])
     out = DATA / "preview" / f"{req.project}.jpg"
+    req.preset = apply_face(req.preset, p.get("face"))
     try:
         render_frame(Path(p["video"]), m, req.preset, out, transcript_of(p), filler_of(p, req.preset, m), req.at)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)[-400:])
     return FileResponse(out, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/projects/{pid}/face")
+def refind_face(pid: str):
+    """Заново ищет лицо стримера (например, если вебку переставили)."""
+    p = project(pid)
+    if not p.get("video"):
+        raise HTTPException(400, "Видео ещё не готово")
+    try:
+        face = find_face(Path(p["video"]), 0, min(p.get("duration", 60), 600))
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+    with lock:
+        p["face"] = face
+    save_state()
+    return {"face": face}
 
 
 @app.get("/api/projects/{pid}/zip")
@@ -646,7 +670,7 @@ def top_job(pid: str, req: TopReq) -> None:
         photo = asset_path(owner, "photos", req.photo) if req.photo else None
         fonts = ASSETS / owner / "fonts"
         name = f"top_{slug(req.title)}_{uuid.uuid4().hex[:4]}.mp4"
-        render_top(Path(p["video"]), moments, req.title, req.preset, DATA / "clips" / pid / name,
+        render_top(Path(p["video"]), moments, req.title, apply_face(req.preset, p.get("face")), DATA / "clips" / pid / name,
                    photo if photo and photo.exists() else None, fonts if fonts.is_dir() else None)
         with lock:
             p.setdefault("clips", []).insert(0, {

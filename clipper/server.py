@@ -349,7 +349,7 @@ def get_state():
                 "disk_free_gb": round(shutil.disk_usage(DATA).free / 1e9, 1),
                 "watch": state["watch"], "accounts": state["accounts"], "profile": PROFILE,
                 "themes": state["themes"], "theme_status": theme_status, "queue": queue_view(),
-                "story_status": story_status, "blotato": blotato.enabled(), "pack_status": pack_status, "mac_voice": story_mod.platform.system() == "Darwin",
+                "story_status": story_status, "blotato": blotato.enabled(), "pack_status": pack_status, "uniq": {**uniq_status, **uniq_files()}, "packs": saved_packs(), "mac_voice": story_mod.platform.system() == "Darwin",
                 "edge_voices": story_mod.EDGE_VOICES if shutil.which("edge-tts") else {},
                 "fetching": sorted(fetching)}
 
@@ -1396,6 +1396,14 @@ def streamer_clips(sid: str, period: str = "7d"):
 pack_status: dict = {"busy": False, "message": ""}
 
 
+def saved_packs() -> list[dict]:
+    """Паки из файла packs.json в корне проекта — чтобы подключать их одной кнопкой."""
+    try:
+        return json.loads((ROOT / "packs.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+
+
 class PackReq(BaseModel):
     url: str
     owner: str = "common"
@@ -1626,6 +1634,159 @@ def delete_clip(pid: str, name: str):
     return {"ok": True}
 
 
+# ---------- уникализатор: пачка готовых видео -> несколько копий каждого ----------
+
+UNIQ = DATA / "uniq"
+uniq_status: dict = {"busy": False, "stop": False, "message": "", "done": 0, "total": 0}
+uniq_proc: dict = {"p": None}
+
+
+def uniq_files() -> dict:
+    def rows(folder: Path) -> list[dict]:
+        if not folder.is_dir():
+            return []
+        return [{"name": f.name, "mb": round(f.stat().st_size / 1e6, 1)}
+                for f in sorted(folder.iterdir(), key=lambda f: -f.stat().st_mtime) if f.is_file()]
+    return {"in": rows(UNIQ / "in"), "out": rows(UNIQ / "out"), "bg": rows(UNIQ / "bg")}
+
+
+@app.put("/api/uniq/{box}")
+async def uniq_upload(box: str, name: str, request: Request):
+    """Загрузка видео для обработки (in) или фона (bg)."""
+    if box not in ("in", "bg"):
+        raise HTTPException(400, "Неизвестный раздел")
+    target = UNIQ / box / (slug(Path(name).stem, "video") + Path(name).suffix.lower())
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with open(target, "wb") as f:
+        async for chunk in request.stream():
+            f.write(chunk)
+    return {"name": target.name}
+
+
+class UniqPathReq(BaseModel):
+    path: str
+
+
+@app.post("/api/uniq/add")
+def uniq_add(req: UniqPathReq):
+    """Добавить файл или целую папку с этого компьютера — без копирования через браузер."""
+    from .looks import collect_videos
+    found = collect_videos([req.path.strip()])
+    if not found:
+        raise HTTPException(400, "По этому пути видео не найдено")
+    (UNIQ / "in").mkdir(parents=True, exist_ok=True)
+    for f in found:
+        link = UNIQ / "in" / f.name
+        if not link.exists():
+            try:
+                link.symlink_to(f.resolve())
+            except OSError:
+                shutil.copyfile(f, link)
+    return {"added": len(found)}
+
+
+@app.delete("/api/uniq/{box}")
+def uniq_clear(box: str, name: str = ""):
+    if box not in ("in", "out", "bg") or uniq_status["busy"]:
+        raise HTTPException(400, "Сейчас нельзя" if uniq_status["busy"] else "Неизвестный раздел")
+    folder = UNIQ / box
+    for f in ([folder / Path(name).name] if name else list(folder.glob("*")) if folder.is_dir() else []):
+        if f.is_file() or f.is_symlink():
+            f.unlink()
+    return {"ok": True}
+
+
+@app.get("/uniq/{box}/{name}")
+def uniq_file(box: str, name: str):
+    path = UNIQ / ("out" if box == "out" else "in") / Path(name).name
+    if not path.exists():
+        raise HTTPException(404, "Файл не найден")
+    return FileResponse(path)
+
+
+@app.get("/api/uniq/zip")
+def uniq_zip():
+    import zipfile
+    files = [f for f in (UNIQ / "out").glob("*") if f.is_file()] if (UNIQ / "out").is_dir() else []
+    if not files:
+        raise HTTPException(400, "Готовых копий пока нет")
+    out = DATA / "preview" / "uniq.zip"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as z:
+        for f in files:
+            z.write(f, f.name)
+    return FileResponse(out, media_type="application/zip", filename="kopii.zip")
+
+
+@app.post("/api/uniq/stop")
+def uniq_stop():
+    uniq_status["stop"] = True
+    proc = uniq_proc["p"]
+    if proc and proc.poll() is None:
+        proc.terminate()
+    return {"ok": True}
+
+
+@app.post("/api/uniq/run")
+def uniq_run(cfg: dict):
+    """Запуск обработки: каждое видео из списка получает заданное число копий."""
+    from . import looks
+    from .top import has_audio
+    if uniq_status["busy"]:
+        raise HTTPException(409, "Обработка уже идёт")
+    conf = dict(looks.UNIQ_DEFAULTS)
+    for key, default in looks.UNIQ_DEFAULTS.items():
+        if key in cfg:
+            try:
+                conf[key] = type(default)(cfg[key])
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"Неверное значение: {key}")
+    conf["copies"] = max(1, min(conf["copies"], 20))
+    conf["zoom_min"], conf["zoom_max"] = max(1.0, conf["zoom_min"]), min(1.3, conf["zoom_max"])
+    conf["speed_min"], conf["speed_max"] = max(0.8, conf["speed_min"]), min(1.25, conf["speed_max"])
+    if conf["background"]:
+        conf["background"] = str(UNIQ / "bg" / Path(conf["background"]).name)
+    files = looks.collect_videos([str(UNIQ / "in")])
+    if not files:
+        raise HTTPException(400, "Сначала добавьте видео")
+    (UNIQ / "out").mkdir(parents=True, exist_ok=True)
+
+    def job():
+        total, done, failed = len(files) * conf["copies"], 0, 0
+        try:
+            for src in files:
+                audio = has_audio(src)
+                for n in range(1, conf["copies"] + 1):
+                    if uniq_status["stop"]:
+                        raise InterruptedError
+                    uniq_status.update(done=done, total=total, message=f"{src.stem}: копия {n} из {conf['copies']}")
+                    out = UNIQ / "out" / f"{src.stem}_k{n}_{uuid.uuid4().hex[:4]}.mp4"
+                    params = looks.uniq_params(conf, random.Random())
+                    proc = subprocess.Popen(looks.uniq_command(src, out, conf, params, audio),
+                                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                    uniq_proc["p"] = proc
+                    err = proc.communicate()[1]
+                    if uniq_status["stop"]:
+                        out.unlink(missing_ok=True)
+                        raise InterruptedError
+                    if proc.returncode != 0:
+                        failed += 1
+                        out.unlink(missing_ok=True)
+                        print("uniq:", err[-400:])
+                    done += 1
+            uniq_status["message"] = f"Готово: копий {done - failed}" + (f", не удалось {failed}" if failed else "")
+        except InterruptedError:
+            uniq_status["message"] = f"Остановлено. Готово копий: {done - failed}"
+        except Exception as exc:
+            traceback.print_exc()
+            uniq_status["message"] = f"Ошибка: {str(exc)[:300]}"
+        uniq_status.update(busy=False, stop=False, done=done, total=total)
+
+    uniq_status.update(busy=True, stop=False, done=0, total=len(files) * conf["copies"], message="Запускаю…")
+    threading.Thread(target=job, daemon=True).start()
+    return {"ok": True}
+
+
 class CopiesReq(BaseModel):
     count: int = 3
     look: str = ""
@@ -1685,9 +1846,59 @@ async def on_error(_: Request, exc: Exception):
     return JSONResponse({"detail": str(exc)[:500]}, status_code=500)
 
 
+SAMPLE_TITLES = {
+    "kalatay_mem_zadacha_na_raund": "Kalatay · мем: Задача на раунд", "kalatay_mem_neibor_i_mama": "Kalatay · мем: Нейбор и мама",
+    "kalatay_mem_rozbyv_monitor": "Kalatay · мем: Розбив монітор", "kalatay_mem_biy_z_tinnyu": "Kalatay · мем: Бій з тінню",
+    "kalatay_format_baner_upg": "Kalatay · формат «банер» UPG", "kalatay_vebka_i_igra": "Kalatay · вебка + игра",
+    "spokoinaya_narezka": "Спокойная нарезка", "reklamnaya_pauza_demo": "Рекламная пауза (проба)",
+    "cvetokor_glitch_emoji_demo": "Цветокор, глитч, эмодзи (проба)", "demo1_neon": "Неон (проба)",
+    "demo2_classic": "Классика (проба)", "demo3_top": "ТОП (проба)", "demo4_stutter": "Двойной наезд на запинке (проба)"}
+
+
+def install_samples(force: bool = False) -> dict:
+    """Примеры готовых роликов и стартовые материалы из папки samples — один раз при первом запуске."""
+    src, mark = ROOT / "samples", DATA / ".samples_installed"
+    if not src.is_dir() or (mark.exists() and not force):
+        return {"clips": 0, "assets": 0}
+    copied = 0
+    for f in (src / "assets").rglob("*"):
+        if f.is_file():
+            target = ASSETS / f.relative_to(src / "assets")
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(f, target)
+                copied += 1
+    clips = []
+    out = DATA / "clips" / "samples"
+    out.mkdir(parents=True, exist_ok=True)
+    for f in sorted((src / "clips").glob("*.mp4")):
+        if not (out / f.name).exists():
+            shutil.copyfile(f, out / f.name)
+        clips.append({"file": f.name, "title": SAMPLE_TITLES.get(f.stem, f.stem), "caption": "", "hashtags": [], "score": 0,
+                      "profanity": False, "preset": "пример", "start": 0, "end": 0, "speed": 1.0, "created": time.time()})
+    with lock:
+        state["projects"]["samples"] = {
+            "id": "samples", "source": "samples", "title": "Примеры роликов", "status": "ready",
+            "message": "Готовые ролики, собранные при разработке", "moments": [], "clips": clips, "filler": "",
+            "streamer": "", "created": time.time()}
+    DATA.mkdir(parents=True, exist_ok=True)
+    mark.write_text("ok")
+    save_state()
+    return {"clips": len(clips), "assets": copied}
+
+
+@app.post("/api/samples/install")
+def samples_install():
+    return install_samples(force=True)
+
+
 def main() -> None:
     import uvicorn
     load_state()
+    try:
+        install_samples()
+    except OSError:
+        traceback.print_exc()
     manager.start()
     threading.Thread(target=trends_loop, daemon=True).start()
     threading.Thread(target=publish_loop, daemon=True).start()

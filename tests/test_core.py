@@ -288,3 +288,18 @@ def test_kick_helpers():
     assert kick.is_clip_url("https://kick.com/kalatay3/clips/clip_01M0AF2BHRKA4SPKHCTGVWR818")
     assert not kick.is_clip_url("https://kick.com/kalatay3/videos/abc")
     assert kick.PERIODS["7d"] == "week" and kick._ts("2026-08-18") > 0
+
+
+def test_uniq_command_and_collect(tmp_path):
+    import random
+    from clipper import looks
+    cfg = dict(looks.UNIQ_DEFAULTS)
+    p = looks.uniq_params(cfg, random.Random(3))
+    assert 1.0 <= p["zoom"] <= 1.04 and 0.98 <= p["speed"] <= 1.02
+    cmd = looks.uniq_command(tmp_path / "a.mp4", tmp_path / "o.mp4", cfg, p, True)
+    assert "-map_metadata" in cmd and "-vf" in cmd and any(x.startswith("atempo=") for x in cmd)
+    bg = tmp_path / "bg.jpg"; bg.write_bytes(b"x")
+    cmd = looks.uniq_command(tmp_path / "a.mp4", tmp_path / "o.mp4", {**cfg, "background": str(bg), "size": "vertical"}, p, False)
+    assert "-filter_complex" in cmd and "-an" in cmd and "overlay" in cmd[cmd.index("-filter_complex") + 1]
+    (tmp_path / "v1.mp4").write_bytes(b"x"); (tmp_path / "n.txt").write_bytes(b"x")
+    assert [f.name for f in looks.collect_videos([str(tmp_path)])] == ["v1.mp4"]

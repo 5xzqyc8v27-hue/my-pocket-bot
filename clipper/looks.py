@@ -74,3 +74,73 @@ def make_copy(src: Path, out: Path, seed: int, look: str = "") -> dict:
     run(cmd + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-map_metadata", "-1",
                "-movflags", "+faststart", str(out)])
     return p
+
+
+VIDEO_EXT = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v")
+UNIQ_DEFAULTS = {
+    "copies": 3, "size": "keep",  # keep — как в исходнике, vertical — 1080x1920, square — 1080x1080
+    "zoom_min": 1.0, "zoom_max": 1.04, "speed_min": 0.98, "speed_max": 1.02,
+    "brightness": 0.02, "contrast": 0.04, "saturation": 0.05,
+    "look": "", "look_strength": 0.5, "denoise": 0.0, "sharpen": 0.0,
+    "strip_metadata": True, "keep_audio": True,
+    "background": "", "opacity": 1.0, "scale": 0.85, "position": "center",  # ролик поверх своего фона
+}
+SIZES = {"vertical": (1080, 1920), "square": (1080, 1080), "wide": (1920, 1080)}
+
+
+def uniq_params(cfg: dict, rnd: random.Random) -> dict:
+    """Случайные значения одной копии в заданных пределах."""
+    return {"zoom": round(rnd.uniform(cfg["zoom_min"], max(cfg["zoom_min"], cfg["zoom_max"])), 4),
+            "speed": round(rnd.uniform(cfg["speed_min"], max(cfg["speed_min"], cfg["speed_max"])), 4),
+            "brightness": round(rnd.uniform(-cfg["brightness"], cfg["brightness"]), 4),
+            "contrast": round(1 + rnd.uniform(-cfg["contrast"], cfg["contrast"]), 4),
+            "saturation": round(1 + rnd.uniform(-cfg["saturation"], cfg["saturation"]), 4),
+            "x": round(rnd.random(), 3), "y": round(rnd.random(), 3)}
+
+
+def uniq_command(src: Path, out: Path, cfg: dict, p: dict, audio: bool) -> list[str]:
+    """Команда ffmpeg для одной копии."""
+    size = SIZES.get(cfg["size"])
+    tone = [f"eq=brightness={p['brightness']}:contrast={p['contrast']}:saturation={p['saturation']}"]
+    tone += clean_filters(cfg["denoise"], cfg["sharpen"])
+    if look_filter(cfg["look"], cfg["look_strength"]):
+        tone.append(look_filter(cfg["look"], cfg["look_strength"]))
+    tone.append(f"setpts=PTS/{p['speed']}")
+    zoom = [f"scale=ceil(iw*{p['zoom']}/2)*2:ceil(ih*{p['zoom']}/2)*2",
+            f"crop=trunc(iw/{p['zoom']}/2)*2:trunc(ih/{p['zoom']}/2)*2:(iw-ow)*{p['x']}:(ih-oh)*{p['y']}"]
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(src)]
+    background = Path(cfg["background"]) if cfg["background"] else None
+    if background and background.is_file():
+        W, H = size or (1080, 1920)
+        still = background.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
+        cmd += (["-loop", "1"] if still else ["-stream_loop", "-1"]) + ["-i", str(background)]
+        fw, fh = int(W * cfg["scale"]) // 2 * 2, int(H * cfg["scale"]) // 2 * 2
+        y = {"top": "0", "bottom": "H-h"}.get(cfg["position"], "(H-h)/2")
+        graph = (f"[1:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[bg];"
+                 f"[0:v]{','.join(zoom + tone)},scale={fw}:{fh}:force_original_aspect_ratio=decrease,format=rgba,"
+                 f"colorchannelmixer=aa={max(0.1, min(1.0, cfg['opacity'])):.3f}[fg];"
+                 f"[bg][fg]overlay=(W-w)/2:{y}:shortest=1,format=yuv420p[v]")
+        cmd += ["-filter_complex", graph, "-map", "[v]"] + (["-map", "0:a?"] if cfg["keep_audio"] else [])
+    else:
+        fit = [f"scale={size[0]}:{size[1]}:force_original_aspect_ratio=increase", f"crop={size[0]}:{size[1]}"] if size else []
+        cmd += ["-vf", ",".join(fit + zoom + tone + ["scale=trunc(iw/2)*2:trunc(ih/2)*2", "format=yuv420p"])]
+    if cfg["keep_audio"] and audio:
+        cmd += ["-af", f"atempo={p['speed']}", "-c:a", "aac", "-b:a", "160k"]
+    else:
+        cmd += ["-an"]
+    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-movflags", "+faststart"]
+    if cfg["strip_metadata"]:
+        cmd += ["-map_metadata", "-1"]
+    return cmd + ["-shortest", str(out)]
+
+
+def collect_videos(paths: list[str]) -> list[Path]:
+    """Файлы и папки -> список видео (папки просматриваются на один уровень вглубь)."""
+    out = []
+    for raw in paths:
+        path = Path(raw).expanduser()
+        if path.is_dir():
+            out += sorted(f for f in path.iterdir() if f.suffix.lower() in VIDEO_EXT and not f.name.startswith("."))
+        elif path.is_file() and path.suffix.lower() in VIDEO_EXT:
+            out.append(path)
+    return list(dict.fromkeys(out))

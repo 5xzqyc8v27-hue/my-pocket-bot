@@ -229,3 +229,19 @@ def test_lut_and_effect_filters():
     assert "lut3d" not in build_filter(p, False, False, None)
     ins = _Ins("/x/common/effects/glitch.mp4", 1.0, 1.5, "full", 1.0)
     assert ins.effect and "blend=all_mode=screen" in build_filter(p, False, False, None, inserts=[ins], first_insert=1)
+
+
+def test_calm_preset_and_fade_join(tmp_path):
+    from pathlib import Path
+    from clipper.models import Preset
+    from clipper import compile as comp
+    p = Preset.load("calm", Path(__file__).parent.parent / "presets")
+    assert p.transition == "fade" and p.camera == "push" and not p.subtitle_pop
+    seen = {}
+    comp.run, old = (lambda cmd, **k: seen.update(cmd=cmd)), comp.run
+    try:
+        comp.join_faded([tmp_path / "a.mp4", tmp_path / "b.mp4", tmp_path / "c.mp4"], [10, 8, 6], tmp_path / "o.mp4")
+    finally:
+        comp.run = old
+    graph = seen["cmd"][seen["cmd"].index("-filter_complex") + 1]
+    assert graph.count("xfade") == 2 and "offset=9.550" in graph and "offset=17.100" in graph

@@ -1,0 +1,19 @@
+{
+  "name": "calm",
+  "layout": "center",
+  "camera": "push",
+  "camera_strength": 0.05,
+  "event_zoom": false,
+  "teaser": 0.0,
+  "cam_fullscreen": false,
+  "title_anim": false,
+  "subtitle_pop": false,
+  "subtitle_upper": false,
+  "subtitle_size": 58,
+  "subtitle_words": 4,
+  "subtitle_highlight": "FFE9A8",
+  "censor": true,
+  "saturation": 0.92,
+  "contrast": 0.97,
+  "transition": "fade"
+}

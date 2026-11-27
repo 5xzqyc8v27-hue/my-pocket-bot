@@ -218,11 +218,27 @@ def analyze_job(pid: str, opts: dict) -> None:
 
 
 def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False, styles: int = 1,
-               common_title: str = "") -> None:
+               common_title: str = "", merge: bool = False) -> None:
     p = state["projects"][pid]
     video, tr = Path(p["video"]), transcript_of(p)
     out_dir = DATA / "clips" / pid
     try:
+        if merge and len(indexes) >= 2:  # отмеченные моменты — одним роликом, по порядку эфира
+            preset = apply_face(base, p.get("face"))
+            pieces = [(video, Moment.model_validate(p["moments"][i]), tr) for i in sorted(indexes)]
+            title = common_title.strip()
+            set_status(p, "render", f"Собираю нарезку из {len(pieces)} моментов")
+            name = f"narezka_{slug(title or pieces[0][1].title)}_{preset.name}_{uuid.uuid4().hex[:4]}.mp4"
+            render_compilation(pieces, title, preset, out_dir / name, None, filler_of(p, preset), resolve_asset)
+            first = pieces[0][1]
+            with lock:
+                p.setdefault("clips", []).insert(0, {
+                    "file": name, "title": title or first.title, "caption": first.caption, "hashtags": first.hashtags,
+                    "score": max(m.score for _, m, _ in pieces), "profanity": any(m.profanity for _, m, _ in pieces),
+                    "preset": preset.name + " · нарезка", "start": first.start, "end": pieces[-1][1].end,
+                    "speed": 1.0, "created": time.time()})
+            set_status(p, "ready", f"Нарезка из {len(pieces)} моментов готова")
+            return
         jobs = [(i, base) for i in indexes]
         if styles > 1:  # тот же момент в других пресетах — каждый со своей вариацией
             others = [x for x in (Preset.load(str(f), PRESETS) for f in sorted(PRESETS.glob("*.json")))
@@ -302,6 +318,7 @@ class RenderReq(BaseModel):
     vary: bool = False
     styles: int = 1  # сколько разных стилей сделать из каждого момента
     common_title: str = ""  # одна надпись для всех роликов пачки
+    merge: bool = False  # склеить выбранные моменты в один ролик
 
 
 @app.get("/")
@@ -536,7 +553,7 @@ def render(req: RenderReq):
     if bad or not req.moments:
         raise HTTPException(400, "Выберите моменты для монтажа")
     set_status(p, "render", "Запускаю монтаж…")
-    threading.Thread(target=render_job, args=(req.project, req.moments, req.preset, req.vary, max(1, min(req.styles, 5)), req.common_title),
+    threading.Thread(target=render_job, args=(req.project, req.moments, req.preset, req.vary, max(1, min(req.styles, 5)), req.common_title, req.merge),
                      daemon=True).start()
     return {"ok": True}
 
@@ -818,7 +835,7 @@ def theme_render_job(tid: str, req: ThemeRenderReq) -> None:
         name = f"podborka_{slug(th['title'])}_{uuid.uuid4().hex[:4]}.mp4"
         music = resolve_asset(req.music) if req.music else None
         render_compilation(pieces, th["title"], req.preset, DATA / "clips" / home["id"] / name, music,
-                           filler_of(home, req.preset))
+                           filler_of(home, req.preset), resolve_asset)
         with lock:
             home.setdefault("clips", []).insert(0, {
                 "file": name, "title": th["title"], "caption": th.get("why", ""), "hashtags": [], "kind": "theme",

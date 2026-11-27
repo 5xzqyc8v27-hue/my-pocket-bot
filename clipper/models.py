@@ -138,6 +138,7 @@ class Preset(BaseModel):
     saturation: float = 1.0
     lut: str = ""  # цветокор: файл .cube из материалов («владелец/luts/имя») или путь
     lut_strength: float = 1.0
+    transition: str = "none"  # подборки: none — встык, fade — мягкое затемнение между кусками
     border: int = 0
     border_color: str = "FFFFFF"
     chat_nick_color: str = "A970FF"

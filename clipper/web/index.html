@@ -323,6 +323,7 @@ const TABS = {
     ['contrast', 'Контраст', 'range', [0.8, 1.3, 0.01]],
     ['saturation', 'Насыщенность', 'range', [0.6, 1.6, 0.01]],
     ['lut', 'Цветокор (LUT из материалов)', 'lut'],
+    ['transition', 'Переходы в подборках', 'select', {none: 'Встык', fade: 'Мягкое затемнение'}],
     ['lut_strength', 'Сила цветокора', 'range', [0, 1, 0.05]],
     ['border', 'Рамка, пикс.', 'range', [0, 30, 1]],
     ['border_color', 'Цвет рамки', 'color'],
@@ -345,7 +346,7 @@ function openCustom(title, build, wide) { modal = {title, build, wide}; drawCust
 function drawCustom() { if (!modal || typeof modal === 'string') return; const d = $('#modal');
   $('#modalTitle').textContent = modal.title; d.classList.toggle('narrow', !modal.wide); $('#modalBody').replaceChildren(...[modal.build()].flat().filter(Boolean)); if (!d.open) d.showModal(); }
 function closeModal() { modal = null; const d = $('#modal'); if (d.open) d.close(); }
-let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''}, themeStreamer = '', themeMusic = '', styleCount = 1, hist = {}, histPick = {}, histMode = 'vods', clipRange = '7d', story = {topic: '', script: '', title: '', voice: '', music: '', projects: new Set()}, histOpt = {preset: 'reaction', focus: '', count: 8};
+let catFilter = '', varyOn = true, mergeOn = false, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''}, themeStreamer = '', themeMusic = '', styleCount = 1, hist = {}, histPick = {}, histMode = 'vods', clipRange = '7d', story = {topic: '', script: '', title: '', voice: '', music: '', projects: new Set()}, histOpt = {preset: 'reaction', focus: '', count: 8};
 let view = 'Проект', owner = 'common', kind = 'photos';
 let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: [], themes: {}, theme_status: {}, queue: {}, story_status: {}, blotato: false, pack_status: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
 
@@ -814,10 +815,11 @@ function renderMain() {
       h('div', {class: 'field'}, h('label', {}, 'Оформление'), h('div', {class: 'row'}, h('select', {onchange: e => { preset = structuredClone(S.presets.find(x => x.name === e.target.value)); renderMain(); }}, S.presets.map(x => h('option', {value: x.name, selected: x.name === preset.name}, x.name))), h('button', {class: 'btn', style: 'flex:none', onclick: () => openModal('design')}, 'Настроить'))),
       h('div', {class: 'field', style: 'flex:0 0 190px'}, h('label', {}, 'Стилей на момент'), h('select', {title: 'Тот же момент дополнительно монтируется в других пресетах', onchange: e => { styleCount = +e.target.value; }}, [1, 2, 3, 4].map(n => h('option', {value: n, selected: n === styleCount}, n === 1 ? 'Один' : n + ' разных')))),
       h('label', {class: 'check', style: 'margin:0 0 8px', title: 'Каждый ролик получит свою вариацию: положение и стиль текста, камера, скорость, цвет'}, h('input', {type: 'checkbox', checked: varyOn, onchange: e => { varyOn = e.target.checked; }}), 'Разнообразить'),
+      h('label', {class: 'check', style: 'margin:0 0 8px', title: 'Отмеченные моменты склеиваются в один ролик по порядку. Переходы — в оформлении: встык или мягкое затемнение'}, h('input', {type: 'checkbox', checked: mergeOn, onchange: e => { mergeOn = e.target.checked; }}), 'Одним роликом'),
       h('button', {class: 'btn', style: 'flex:none', disabled: busy, title: 'Подборка «ТОП N» из отмеченных моментов', onclick: () => openModal('top')}, 'Собрать ТОП'),
       h('button', {class: 'btn primary', id: 'renderBtn', style: 'flex:none', disabled: busy, onclick: async () => {
         const list = picked.size ? [...picked] : p.moments.map((_, i) => i);
-        try { await api('/api/render', 'POST', {project: p.id, moments: list, preset, vary: varyOn && list.length > 1, styles: styleCount, common_title: commonTitle}); refresh(true); } catch (e) { alert(e.message); } }}, 'Смонтировать все')) : null);
+        try { await api('/api/render', 'POST', {project: p.id, moments: list, preset, vary: varyOn && list.length > 1, styles: styleCount, common_title: commonTitle, merge: mergeOn && list.length > 1}); refresh(true); } catch (e) { alert(e.message); } }}, 'Смонтировать все')) : null);
 
   const editor = h('div', {class: 'card'}, h('h2', {}, 'Оформление'),
     h('div', {class: 'row', style: 'margin-bottom:10px'},

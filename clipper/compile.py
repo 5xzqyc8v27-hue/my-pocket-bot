@@ -94,25 +94,54 @@ def find_themes(sources: list[tuple[str, str, Transcript]], count: int = 5) -> l
     return out[:count]
 
 
+def join_faded(parts: list[Path], lengths: list[float], out: Path, fade: float = 0.45) -> None:
+    """Склейка с мягким затемнением между кусками, плавным входом и выходом."""
+    from .top import has_audio
+    cmd, fc, offset, v, a = ["ffmpeg", "-y", "-v", "error"], [], 0.0, "0:v", "0:a"
+    sound = all(has_audio(p) for p in parts)
+    for p in parts:
+        cmd += ["-i", str(p)]
+    for i in range(1, len(parts)):
+        offset += lengths[i - 1] - fade
+        fc.append(f"[{v}][{i}:v]xfade=transition=fade:duration={fade}:offset={offset:.3f}[v{i}]")
+        v = f"v{i}"
+        if sound:
+            fc.append(f"[{a}][{i}:a]acrossfade=d={fade}[a{i}]")
+            a = f"a{i}"
+    end = sum(lengths) - fade * (len(parts) - 1) - 0.6
+    fc.append(f"[{v}]fade=in:st=0:d=0.35,fade=out:st={end:.2f}:d=0.6,format=yuv420p[vo]")
+    cmd += ["-filter_complex"]
+    if sound:
+        fc.append(f"[{a}]afade=in:d=0.3,afade=out:st={end:.2f}:d=0.6[ao]")
+    cmd += [";".join(fc), "-map", "[vo]"] + (["-map", "[ao]", "-c:a", "aac", "-b:a", "160k"] if sound else [])
+    run(cmd + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-movflags", "+faststart", str(out)])
+
+
 def render_compilation(pieces: list[tuple[Path, Moment, Transcript | None]], title: str, preset: Preset,
-                       out_path: Path, music: Path | None = None, filler: Path | None = None) -> Path:
-    """Монтирует каждый кусок в общем оформлении с одним заголовком и склеивает встык."""
+                       out_path: Path, music: Path | None = None, filler: Path | None = None,
+                       resolve=None) -> Path:
+    """Монтирует каждый кусок в общем оформлении с одним заголовком и склеивает: встык или с затемнением."""
     if len(pieces) < 2:
         raise ValueError("Для подборки нужно минимум два куска")
-    base = preset.model_copy(update={"title": True, "title_anim": False, "speed": 1.0, "camera": "none"})
+    base = preset.model_copy(update={"title": True, "title_anim": False, "speed": 1.0,
+                                    "camera": "push" if preset.camera == "push" else "none", "teaser": 0.0})
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         names = []
         for i, (video, moment, tr) in enumerate(pieces):
             part = Path(tmp) / f"part{i:02d}.mp4"
             render_clip(video, moment.model_copy(update={"title": title, "inserts": [], "chat_text": ""}),
-                        base, part, tr, filler)
+                        base, part, tr, filler, resolve)
             names.append(f"file '{part.name}'")
         (Path(tmp) / "list.txt").write_text("\n".join(names), encoding="utf-8")
         joined = Path(tmp) / "joined.mp4"
-        run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", "list.txt",
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k",
-             "-movflags", "+faststart", str(joined)], cwd=Path(tmp))
+        if preset.transition == "fade":
+            join_faded([Path(tmp) / f"part{i:02d}.mp4" for i in range(len(pieces))],
+                       [m.duration for _, m, _ in pieces], joined)
+        else:
+            run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", "list.txt",
+                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k",
+                 "-movflags", "+faststart", str(joined)], cwd=Path(tmp))
         if music and Path(music).exists():  # тихая музыка под всем роликом
             run(["ffmpeg", "-y", "-v", "error", "-i", str(joined), "-stream_loop", "-1", "-i", str(Path(music).resolve()),
                  "-filter_complex", "[1:a]volume=0.16[m];[0:a][m]amix=inputs=2:normalize=0:duration=first[a]",

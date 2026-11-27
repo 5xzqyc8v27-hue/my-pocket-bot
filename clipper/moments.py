@@ -289,7 +289,11 @@ def pick(video: Path, tr: Transcript | None, picker: str, count: int, min_len: f
         if not has_text:
             raise RuntimeError(f"Для «{name}» нужна расшифровка речи")
         try:
-            return llm[name](tr, count, min_len, max_len, focus=focus, avoid=avoid), name
+            found = llm[name](tr, count, min_len, max_len, focus=focus, avoid=avoid)
+            if not avoid.strip():  # правил нет — пометка риска не нужна
+                for m in found:
+                    m.risk = ""
+            return found, name
         except Exception as exc:  # любой сбой нейросети — пробуем следующий способ
             log(f"  {name} не сработал: {exc}")
             if name == chain[-1]:

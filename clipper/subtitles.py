@@ -112,7 +112,8 @@ def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
                 start, end = max(0.0, start), min(clip_len, end)
                 if end - start < 0.02:
                     continue
-                shown = [censor_word(g.text) if preset.censor else g.text for g in group]
+                # «ааааааааа» на всю ширину кадра сжимаем до трёх букв
+                shown = [re.sub(r"(.)\1{3,}", r"\1\1\1", censor_word(g.text) if preset.censor else g.text) for g in group]
                 texts = [_escape(t.upper() if preset.subtitle_upper else t) for t in shown]
                 parts = [f"{{\\c{hi}&}}{t}{{\\c{base}&}}" if k == j else t for k, t in enumerate(texts)]
                 lines.append(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Sub,{pos}{' '.join(parts)}")

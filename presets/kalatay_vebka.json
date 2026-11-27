@@ -17,5 +17,6 @@
   "censor": true,
   "banner": "common/banners/kick_kalatay3_plashka.png",
   "banner_mode": "bottom",
-  "camera": "none"
+  "camera": "none",
+  "event_zoom": false
 }

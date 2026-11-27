@@ -1849,6 +1849,8 @@ async def on_error(_: Request, exc: Exception):
 
 
 SAMPLE_TITLES = {
+    "kalatay_1_pryzhok_viry_baner": "Kalatay · Прижок віри (банер UPG)", "kalatay_2_gorobchyk_mem": "Kalatay · Горобчик (мем)",
+    "kalatay_3_nova_zadacha_vebka": "Kalatay · Нова задача (вебка + плашка)", "kalatay_4_mama_spalyla_baner": "Kalatay · Мама спалила вік (банер UPG)",
     "kalatay_mem_zadacha_na_raund": "Kalatay · мем: Задача на раунд", "kalatay_mem_neibor_i_mama": "Kalatay · мем: Нейбор и мама",
     "kalatay_mem_rozbyv_monitor": "Kalatay · мем: Розбив монітор", "kalatay_mem_biy_z_tinnyu": "Kalatay · мем: Бій з тінню",
     "kalatay_format_baner_upg": "Kalatay · формат «банер» UPG", "kalatay_vebka_i_igra": "Kalatay · вебка + игра", "kalatay_format_vebka_plashka": "Kalatay · формат «вебка» с плашкой",

@@ -12,7 +12,7 @@ from typing import Callable
 
 from .chat import ChatLogger
 
-URLS = {"twitch": "https://www.twitch.tv/{}", "kick": "https://kick.com/{}"}
+URLS = {"twitch": "https://www.twitch.tv/{}", "kick": "https://kick.com/{}"}  # для Kick запись идёт мимо streamlink
 CHECK_EVERY = 60  # секунд между проверками «в эфире ли»
 
 
@@ -24,6 +24,12 @@ def is_live(platform: str, channel: str) -> tuple[bool, str]:
     """В эфире ли канал. Ключи Twitch не нужны — спрашиваем через streamlink."""
     if platform == "file":
         return Path(channel).expanduser().exists(), ""
+    if platform == "kick":  # Kick не пускает streamlink — спрашиваем сам сайт
+        from . import kick
+        try:
+            return kick.live_info(channel)["live"], ""
+        except RuntimeError as exc:
+            return False, str(exc)[:160]
     if not shutil.which("streamlink"):
         return False, "streamlink не установлен (pip install streamlink)"
     try:
@@ -55,6 +61,13 @@ class Recorder:
             self.chat.start()
         if platform == "file":  # готовая запись эфира — режем её на куски так же, как живой поток
             self.ffmpeg = subprocess.Popen(["ffmpeg", "-v", "error", "-i", str(Path(channel).expanduser()), *seg])
+        elif platform == "kick":  # поток Kick отдаёт напрямую, ffmpeg пишет его сам
+            from . import kick
+            url = kick.live_info(channel)["url"]
+            if not url:
+                raise RuntimeError("Kick не отдал адрес потока")
+            self.ffmpeg = subprocess.Popen(["ffmpeg", "-v", "error", "-user_agent", kick.UA, "-reconnect", "1",
+                                            "-reconnect_streamed", "1", "-reconnect_delay_max", "15", "-i", url, *seg])
         else:
             self.source = subprocess.Popen(
                 ["streamlink", "--stdout", "--twitch-disable-ads", stream_url(platform, channel), "best"],
@@ -127,9 +140,12 @@ class StreamManager:
                 self._update(s, live=live, last_check=time.time(),
                              message=note or ("В эфире" if live else "Не в эфире — жду"))
                 if live:
-                    self.recorders[sid] = rec = Recorder(s["platform"], s["channel"], self.rec_dir / sid, sid,
-                                                         s.get("chunk_minutes", 10))
-                    self._update(s, recording=True, live_since=time.time(), message="В эфире — пишу")
+                    try:
+                        self.recorders[sid] = rec = Recorder(s["platform"], s["channel"], self.rec_dir / sid, sid,
+                                                             s.get("chunk_minutes", 10))
+                        self._update(s, recording=True, live_since=time.time(), message="В эфире — пишу")
+                    except (RuntimeError, OSError) as exc:
+                        self._update(s, message=f"В эфире, но запись не началась: {str(exc)[:140]}")
         # готовые куски: все, кроме того, который ещё пишется
         files = sorted((self.rec_dir / sid).glob("*.ts")) if (self.rec_dir / sid).is_dir() else []
         if rec and rec.running() and files:

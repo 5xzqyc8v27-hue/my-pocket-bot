@@ -126,3 +126,11 @@ def fetch_clip(page_url: str, workdir: Path) -> Path:
         raise RuntimeError("У клипа нет видео — возможно, он удалён")
     workdir.mkdir(parents=True, exist_ok=True)
     return download_clip(url, workdir / f"{clip_id}.mp4")
+
+
+def live_info(channel: str) -> dict:
+    """Идёт ли эфир: {"live", "title", "viewers", "url"}; url — поток для записи."""
+    data = _json(slug_of(channel))
+    stream = data.get("livestream") or {}
+    return {"live": bool(stream) and stream.get("is_live", True), "title": stream.get("session_title") or "",
+            "viewers": stream.get("viewer_count") or 0, "url": data.get("playback_url") or ""}

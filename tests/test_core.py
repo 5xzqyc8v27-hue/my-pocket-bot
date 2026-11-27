@@ -319,3 +319,13 @@ def test_zip_pack_and_bottom_plate(tmp_path):
     assert got == ["boom.mp3", "font.ttf"]
     g = build_filter(Preset(name="t", layout="reaction", banner_mode="bottom"), False, True, None, plate_h=340)
     assert "vstack=inputs=3" in g and "overlay=(W-w)/2:H*" not in g
+
+
+def test_kick_live_uses_site_api(monkeypatch):
+    from clipper import kick, streams
+    monkeypatch.setattr(kick, "_json", lambda path: {"livestream": {"is_live": True, "session_title": "t", "viewer_count": 5},
+                                                     "playback_url": "https://x/y.m3u8"})
+    assert streams.is_live("kick", "https://kick.com/Kalatay3") == (True, "")
+    assert kick.live_info("kalatay3")["url"].endswith(".m3u8")
+    monkeypatch.setattr(kick, "_json", lambda path: {"livestream": None, "playback_url": ""})
+    assert streams.is_live("kick", "kalatay3") == (False, "")

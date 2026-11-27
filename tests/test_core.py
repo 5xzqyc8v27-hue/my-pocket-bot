@@ -126,3 +126,32 @@ def test_webcam_rect_from_face_snaps_to_edges():
     assert apply_face(Preset(layout="reaction"), face).webcam == (x, y, w, h)
     assert apply_face(Preset(layout="reaction", auto_face=False), face).webcam == Preset().webcam
     assert apply_face(Preset(layout="center"), face).webcam == Preset().webcam
+
+
+def test_blotato_requests_follow_the_official_package(tmp_path):
+    from clipper import blotato
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"\x00" * 1000)
+    calls = []
+
+    def send(method, path, body=None, query=""):
+        calls.append((method, path, body, query))
+        if path == "/v2/media":
+            return {"url": "https://cdn.example/clip.mp4"}
+        if path == "/v2/posts":
+            return {"postSubmissionId": "sub-1"}
+        if path == "/v2/users/me/accounts":
+            return {"items": [{"id": 7, "username": "clips"}]}
+        return {"status": "published", "publicUrl": "https://tiktok.example/v/1"}
+
+    assert blotato.list_accounts("tiktok", send) == [{"id": "7", "name": "clips"}] and calls[0][3] == "platform=tiktok"
+    assert blotato.publish(video, "tiktok", "7", "подпись #тег", "Заголовок", send) == "sub-1"
+    media, post = calls[1], calls[2]
+    assert media[2]["url"].startswith("data:video/mp4;base64,")
+    body = post[2]["post"]
+    assert body["accountId"] == "7" and body["content"] == {"platform": "tiktok", "text": "подпись #тег",
+                                                            "mediaUrls": ["https://cdn.example/clip.mp4"]}
+    assert body["target"]["targetType"] == "tiktok" and body["target"]["privacyLevel"] == "PUBLIC_TO_EVERYONE"
+    assert blotato.target("youtube", "T" * 150)["title"] == "T" * 100
+    assert blotato.target("instagram", "")["mediaType"] == "reel"
+    assert blotato.status("sub-1", send)["state"] == "published"

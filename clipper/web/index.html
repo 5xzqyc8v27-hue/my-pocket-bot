@@ -279,7 +279,7 @@ function drawCustom() { if (!modal || typeof modal === 'string') return; const d
 function closeModal() { modal = null; const d = $('#modal'); if (d.open) d.close(); }
 let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''}, themeStreamer = '', themeMusic = '', styleCount = 1, hist = {}, histPick = {}, story = {topic: '', script: '', title: '', voice: '', music: '', projects: new Set()}, histOpt = {preset: 'reaction', focus: '', count: 8};
 let view = 'Проект', owner = 'common', kind = 'photos';
-let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: [], themes: {}, theme_status: {}, queue: {}, story_status: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
+let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: [], themes: {}, theme_status: {}, queue: {}, story_status: {}, blotato: false}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
 
 const getP = k => k.includes('.') ? preset[k.split('.')[0]][+k.split('.')[1]] : preset[k];
 function setP(k, v) { if (k.includes('.')) { const [a, i] = k.split('.'); preset[a][+i] = v; } else preset[k] = v; queuePreview(); }
@@ -549,6 +549,16 @@ function renderTrends() {
             h('button', {class: 'btn small', title: 'Скачать и найти моменты', onclick: async () => { const x = await (await api('/api/projects', 'POST', {source: r.url, picker: 'auto', count: 5, min: 15, max: 60})).json(); cur = x.id; view = 'Проект'; refresh(true); }}, 'В работу'), ' ',
             h('button', {class: 'btn small', title: 'Разобрать стиль этого ролика', onclick: async () => { await api('/api/references', 'POST', {source: r.url, name: (r.title || r.id).slice(0, 30)}); view = 'Примеры'; refresh(true); }}, 'Как пример'))))));
 }
+let blotatoList = {};
+function blotatoLink(a) {
+  const list = blotatoList[a.platform];
+  const save = extra => api('/api/accounts', 'POST', {...a, ...extra}).then(() => refresh(true)).then(() => { Object.assign(a, extra); drawCustom(); }).catch(e => alert(e.message));
+  if (!list) { api('/api/blotato/accounts?platform=' + a.platform).then(r => r.json()).then(x => { blotatoList[a.platform] = x; drawCustom(); }).catch(e => { blotatoList[a.platform] = []; alert(e.message); drawCustom(); }); return h('div', {class: 'mute'}, 'Загружаю аккаунты из Blotato…'); }
+  return h('div', {},
+    h('div', {class: 'field'}, h('label', {}, 'Аккаунт в Blotato'), h('select', {onchange: e => save({blotato_id: e.target.value})}, h('option', {value: ''}, list.length ? 'Не выбран' : 'В Blotato нет аккаунтов этой площадки'), list.map(x => h('option', {value: x.id, selected: x.id === a.blotato_id}, x.name)))),
+    h('label', {class: 'check'}, h('input', {type: 'checkbox', checked: !!a.autopost, disabled: !a.blotato_id, onchange: e => save({autopost: e.target.checked})}), 'Выкладывать ролики из расписания автоматически'),
+    h('div', {class: 'mute'}, 'Ролики публикуются открыто, от имени этого аккаунта, в назначенное время. Первый раз проверьте на одном ролике.'));
+}
 function addAccountForm() {
   const names = {youtube: 'YouTube Shorts', tiktok: 'TikTok', instagram: 'Instagram Reels'};
   let pl, handle, email, device, streamer, notes;
@@ -571,6 +581,7 @@ function renderAccounts() {
     h('div', {class: 'card'}, list.length ? list.map(a => h('div', {class: 'kv', style: 'padding:7px 0;border-bottom:1px solid var(--line);font-size:13px'},
       h('span', {style: 'color:var(--text)'}, h('span', {class: 'pill'}, names[a.platform]), ' ', h('b', {}, a.handle), h('span', {class: 'mute'}, [a.email && ' · ' + a.email, a.device && ' · ' + a.device, a.streamer && ' · стример: ' + ((S.streamers[a.streamer] || {}).name || a.streamer), a.notes && ' · ' + a.notes].filter(Boolean).join(''))),
       h('span', {style: 'flex:none'}, a.reach && h('span', {class: 'pill ' + ({ok: 'good', warn: 'warn', bad: 'bad'}[a.reach.level] || ''), title: a.reach.verdict + (a.reach.usual_median != null ? ` · обычно ${num(a.reach.usual_median)}, сейчас ${num(a.reach.recent_median)}` : '')}, {ok: 'охваты в норме', warn: 'охваты упали', bad: 'похоже на ограничение', unknown: 'мало данных'}[a.reach.level]), ' ',
+        S.blotato && h('button', {class: 'btn small', title: a.blotato_id ? 'Связан с аккаунтом Blotato' : 'Выбрать соответствующий аккаунт в Blotato', onclick: () => openCustom('Автовыкладка: ' + a.handle, () => blotatoLink(a))}, a.autopost && a.blotato_id ? 'Автовыкладка включена' : 'Автовыкладка'), ' ',
         a.platform !== 'instagram' && h('button', {class: 'btn small', title: 'Сравнить просмотры последних роликов с обычным уровнем аккаунта', onclick: async e => { e.target.disabled = true; e.target.textContent = 'Проверяю…'; try { const r = await (await api(`/api/accounts/${a.id}/check`, 'POST')).json(); toast(a.handle + ': ' + r.verdict, r.level !== 'ok'); } catch (er) { alert(er.message); } refresh(true); }}, 'Проверить охваты'), ' '),
       h('button', {class: 'btn small', onclick: async () => { if (confirm('Удалить запись об аккаунте ' + a.handle + '?')) { await api('/api/accounts/' + a.id, 'DELETE'); refresh(true); } }}, '×'))) : h('div', {class: 'mute'}, 'Аккаунтов пока нет.')),
     h('div', {class: 'card'}, h('h2', {}, 'Проверка IP-адреса'),
@@ -603,11 +614,11 @@ function renderThemes() {
 
 function renderQueue() {
   const list = Object.values(S.queue).sort((a, b) => a.when - b.when), now = Date.now() / 1000;
-  const state = q => q.status === 'published' ? ['вышло', 'good'] : q.status === 'skipped' ? ['пропущено', ''] : q.when <= now ? ['пора выкладывать', 'warn'] : ['в расписании', ''];
+  const state = q => q.status === 'published' ? ['вышло', 'good'] : q.status === 'posting' ? ['отправляется', 'good'] : q.status === 'failed' ? ['ошибка', 'bad'] : q.status === 'skipped' ? ['пропущено', ''] : q.when > now ? ['в расписании', ''] : (S.accounts[q.account] || {}).autopost && S.blotato ? ['выложится само', 'good'] : q.when <= now ? ['пора выкладывать', 'warn'] : ['в расписании', ''];
   const patch = (id, body) => api('/api/queue/' + id, 'PATCH', body).then(() => refresh(true));
   const days = {}; for (const q of list) (days[new Date(q.when * 1000).toLocaleDateString('ru', {weekday: 'short', day: 'numeric', month: 'long'})] ||= []).push(q);
   $('#main').replaceChildren(
-    h('div', {}, h('h1', {}, 'Публикация'), h('div', {class: 'mute'}, 'Расписание по аккаунтам. Автовыкладка пока не подключена: когда подходит время, скачайте ролик, выложите и нажмите «Выложено». Ролики ставятся сюда кнопкой «В очередь» в проекте.')),
+    h('div', {}, h('h1', {}, 'Публикация'), h('div', {class: 'mute'}, S.blotato ? 'Аккаунты с включённой автовыкладкой публикуются сами через Blotato. Остальные — вручную: скачайте ролик, выложите и нажмите «Выложено».' : 'Автовыкладка выключена (нет ключа Blotato): когда подходит время, скачайте ролик, выложите и нажмите «Выложено».')),
     h('div', {class: 'tiles'},
       h('div', {class: 'card tile'}, h('div', {class: 'mute'}, 'В расписании'), h('b', {}, list.filter(q => q.status === 'scheduled' && q.when > now).length)),
       h('div', {class: 'card tile'}, h('div', {class: 'mute'}, 'Пора выкладывать'), h('b', {}, list.filter(q => q.status === 'scheduled' && q.when <= now).length)),
@@ -623,7 +634,7 @@ function renderQueue() {
             q.status !== 'published' && h('button', {class: 'btn small primary', onclick: () => patch(q.id, {status: 'published'})}, 'Выложено'), ' ',
             q.status !== 'published' && h('button', {class: 'btn small', onclick: () => patch(q.id, {shift_hours: 24})}, 'На день позже'), ' ',
             h('button', {class: 'btn small', onclick: () => api('/api/queue/' + q.id, 'DELETE').then(() => refresh(true))}, '×'))),
-        h('div', {class: 'mute'}, q.caption)); }))) : [h('div', {class: 'empty'}, 'Расписание пустое.')]));
+        h('div', {class: 'mute'}, q.caption), q.message ? h('div', {style: 'color:var(--bad);font-size:12px'}, q.message) : null, q.url ? h('a', {href: q.url, target: '_blank', rel: 'noopener', class: 'mute'}, q.url) : null); }))) : [h('div', {class: 'empty'}, 'Расписание пустое.')]));
 }
 function renderStory() {
   const withVideo = Object.values(S.projects).filter(p => p.video), voices = [], music = [];
@@ -639,7 +650,7 @@ function renderStory() {
       h('div', {class: 'field', style: 'margin-top:8px'}, h('label', {}, 'Надпись сверху (необязательно)'), h('input', {type: 'text', value: story.title, oninput: e => { story.title = e.target.value; }}))),
     h('div', {class: 'card'}, h('h2', {}, '2 · Озвучка, видеоряд, оформление'),
       h('div', {class: 'row'},
-        h('div', {class: 'field'}, h('label', {}, 'Озвучка'), h('select', {onchange: e => { story.voice = e.target.value; }}, h('option', {value: ''}, S.mac_voice ? 'Встроенный голос macOS' : 'Загрузите файл в «Материалы → Озвучка»'), voices.map(v => h('option', {value: v, selected: v === story.voice}, v.split('/').pop())))),
+        h('div', {class: 'field'}, h('label', {}, 'Озвучка'), h('select', {onchange: e => { story.voice = e.target.value; }}, h('option', {value: ''}, Object.keys(S.edge_voices || {}).length || S.mac_voice ? 'Авто' : 'Загрузите файл в «Материалы → Озвучка»'), Object.entries(S.edge_voices || {}).map(([k, n]) => h('option', {value: k, selected: k === story.voice}, 'Голос: ' + n)), S.mac_voice ? h('option', {value: 'mac', selected: story.voice === 'mac'}, 'Голос macOS (Милена)') : null, voices.map(v => h('option', {value: v, selected: v === story.voice}, v.split('/').pop())))),
         h('div', {class: 'field'}, h('label', {}, 'Оформление'), h('select', {onchange: e => { preset = structuredClone(S.presets.find(x => x.name === e.target.value)); }}, S.presets.map(x => h('option', {value: x.name, selected: x.name === preset.name}, x.name)))),
         h('div', {class: 'field'}, h('label', {}, 'Музыка'), h('select', {onchange: e => { story.music = e.target.value; }}, h('option', {value: ''}, 'Без музыки'), music.map(v => h('option', {value: v, selected: v === story.music}, v.split('/').pop()))))),
       h('div', {class: 'field'}, h('label', {}, 'Видеоряд — из каких исходников брать куски'), withVideo.length ? h('div', {class: 'hooks'}, withVideo.map(p => h('label', {class: 'check', style: 'margin:0 10px 0 0'}, h('input', {type: 'checkbox', checked: story.projects.has(p.id), onchange: e => { e.target.checked ? story.projects.add(p.id) : story.projects.delete(p.id); }}), p.title))) : h('div', {class: 'mute'}, 'Сначала добавьте исходники с игровым видео во вкладке «Проект».')),

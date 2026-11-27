@@ -8,3 +8,5 @@ uvicorn
 pycapcut
 streamlink
 opencv-python-headless>=4.8,<5
+sherpa-onnx
+edge-tts

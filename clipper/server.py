@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from .analysis import detect_scenes, uniqueness
 from .capcut import default_drafts_dir, export_draft
 from .face import apply_face, find_face
+from . import blotato
 from . import health as health_mod
 from . import history, llm
 from . import story as story_mod
@@ -92,6 +93,9 @@ def load_state() -> None:
         st.update(recording=False, live=False, working="", last_check=0)
     for key in ("watch", "trend_videos", "accounts", "themes", "queue"):
         state.setdefault(key, {})
+    for q in state.get("queue", {}).values():
+        if q.get("status") == "posting" and not q.get("submission"):
+            q.update(status="failed", message="Панель перезапустилась во время отправки — проверьте аккаунт и повторите")
     for r in state["references"].values():
         if r["status"] == "work":
             r["status"], r["message"] = "error", "Прервано перезапуском панели"
@@ -193,7 +197,7 @@ def analyze_job(pid: str, opts: dict) -> None:
         set_status(p, "ready", f"Найдено моментов: {len(moments)}")
         if opts.get("auto_preset"):  # сразу монтируем сильные моменты в выбранном формате
             good = [i for i, m in enumerate(p["moments"])
-                    if m["score"] >= opts.get("auto_min_score", 60) and m.get("category") != "чат"]
+                    if m["score"] >= opts.get("auto_min_score", 0) and m.get("category") != "чат"]
             if good:
                 render_job(pid, good, Preset.load(opts["auto_preset"], PRESETS), varied=len(good) > 1)
     except Exception as exc:
@@ -249,7 +253,7 @@ class NewProject(BaseModel):
     streamer: str = ""
     focus: str = ""
     auto_preset: str = ""  # если задан — сильные моменты сразу монтируются в этом пресете
-    auto_min_score: int = 60
+    auto_min_score: int = 0  # при ручном добавлении монтируем все найденные моменты
 
 
 class MomentPatch(BaseModel):
@@ -293,7 +297,8 @@ def get_state():
                 "disk_free_gb": round(shutil.disk_usage(DATA).free / 1e9, 1),
                 "watch": state["watch"], "accounts": state["accounts"], "profile": PROFILE,
                 "themes": state["themes"], "theme_status": theme_status, "queue": state["queue"],
-                "story_status": story_status, "mac_voice": story_mod.platform.system() == "Darwin",
+                "story_status": story_status, "blotato": blotato.enabled(), "mac_voice": story_mod.platform.system() == "Darwin",
+                "edge_voices": story_mod.EDGE_VOICES if shutil.which("edge-tts") else {},
                 "fetching": sorted(fetching)}
 
 
@@ -316,6 +321,10 @@ def health():
         ("yt-dlp", "Скачивание по ссылкам", shutil.which("yt-dlp") is not None, False, "pip install yt-dlp"),
         ("faster-whisper", "Распознавание речи: субтитры и выбор по смыслу", lib("faster_whisper"), False,
          "pip install faster-whisper (модель скачается сама при первом запуске)"),
+        ("sherpa-onnx", "Запасное распознавание речи (модель с GitHub)", lib("sherpa_onnx"), False,
+         "pip install sherpa-onnx"),
+        ("edge-tts", "Бесплатная онлайн-озвучка для рассказов", shutil.which("edge-tts") is not None, False,
+         "pip install edge-tts"),
         ("Claude по API", "Выбор моментов за кредиты", bool(os.environ.get("ANTHROPIC_API_KEY")), False,
          "export ANTHROPIC_API_KEY=ваш_ключ — перед запуском панели"),
         ("Claude по подписке", "Выбор моментов и разбор примеров без кредитов", shutil.which("claude") is not None,
@@ -323,6 +332,8 @@ def health():
         ("Ollama", "Локальная нейросеть, бесплатно", ollama_available(), False,
          "brew install ollama && ollama serve && ollama pull qwen2.5:7b"),
         ("OpenCV", "Умный кроп по лицу", lib("cv2"), False, 'pip install "opencv-python-headless<5"'),
+        ("Blotato", "Автовыкладка в TikTok, YouTube, Instagram", blotato.enabled(), False,
+         "export BLOTATO_API_KEY=ваш_ключ — перед запуском панели; затем включить автовыкладку у аккаунтов"),
         ("pycapcut", "Экспорт в CapCut", lib("pycapcut"), False, "pip install pycapcut"),
         ("CapCut", "Папка проектов CapCut найдена", default_drafts_dir() is not None, False,
          "Установить CapCut и один раз создать в нём любой проект"),
@@ -849,6 +860,7 @@ def patch_queue(qid: str, patch: QueuePatch):
         raise HTTPException(404, "Запись не найдена")
     with lock:
         if patch.status in ("scheduled", "published", "skipped"):
+            q.pop("message", None)
             q["status"] = patch.status
             if patch.status == "published":
                 q["published_at"] = time.time()
@@ -867,6 +879,53 @@ def delete_queue(qid: str):
         state["queue"].pop(qid, None)
     save_state()
     return {"ok": True}
+
+
+@app.get("/api/blotato/accounts")
+def blotato_accounts(platform: str):
+    """Аккаунты из кабинета Blotato — чтобы связать их с аккаунтами панели."""
+    if not blotato.enabled():
+        raise HTTPException(400, "Ключ Blotato не задан: запустите панель с BLOTATO_API_KEY=ваш_ключ")
+    try:
+        return blotato.list_accounts(platform)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)[:300])
+
+
+def publish_loop() -> None:
+    """Автовыкладка: подошло время — отправляем ролик через Blotato и следим за статусом заявки."""
+    while True:
+        time.sleep(30)
+        if not blotato.enabled():
+            continue
+        for q in list(state["queue"].values()):
+            acc = state["accounts"].get(q["account"], {})
+            try:
+                if q["status"] == "scheduled" and q["when"] <= time.time() and acc.get("autopost") and acc.get("blotato_id"):
+                    clip = DATA / "clips" / q["project"] / q["file"]
+                    if not clip.exists():
+                        raise RuntimeError("Файл ролика не найден")
+                    with lock:
+                        q["status"] = "posting"
+                    save_state()
+                    sub = blotato.publish(clip, acc["platform"], acc["blotato_id"], q["caption"], q["title"])
+                    with lock:
+                        q.update(submission=sub, message="Отправлено, жду подтверждения площадки")
+                elif q["status"] == "posting" and q.get("submission"):
+                    st = blotato.status(q["submission"])
+                    if st["state"] == "published":
+                        with lock:
+                            q.update(status="published", published_at=time.time(), url=st["url"], message="")
+                    elif st["state"] == "failed":
+                        with lock:
+                            q.update(status="failed", message=st["error"] or "Площадка отклонила публикацию")
+                else:
+                    continue
+            except Exception as exc:
+                traceback.print_exc()
+                with lock:
+                    q.update(status="failed", message=str(exc)[:300])
+            save_state()
 
 
 @app.post("/api/queue/cleanup")
@@ -926,11 +985,11 @@ def story_job(req: StoryReq) -> None:
         broll = [Path(state["projects"][pid]["video"]) for pid in req.projects]
         work = DATA / "story"
         work.mkdir(parents=True, exist_ok=True)
-        if req.voice:
+        if req.voice and not req.voice.startswith(("edge:", "mac")):
             voice = resolve_asset(req.voice)
         else:
             story_status["message"] = "Озвучиваю…"
-            voice = story_mod.speak(req.script, work / f"voice_{uuid.uuid4().hex[:6]}.wav")
+            voice = story_mod.speak(req.script, work / f"voice_{uuid.uuid4().hex[:6]}.wav", req.voice)
         story_status["message"] = "Монтирую…"
         name = f"rasskaz_{slug(req.title or req.script[:30])}_{uuid.uuid4().hex[:4]}.mp4"
         story_mod.render_story(req.script, voice, broll, req.preset, DATA / "clips" / home["id"] / name,
@@ -957,7 +1016,7 @@ def make_story(req: StoryReq):
     ok = [pid for pid in req.projects if state["projects"].get(pid, {}).get("video")]
     if not ok:
         raise HTTPException(400, "Выберите хотя бы один исходник для видеоряда")
-    if req.voice and not resolve_asset(req.voice).exists():
+    if req.voice and not req.voice.startswith(("edge:", "mac")) and not resolve_asset(req.voice).exists():
         raise HTTPException(400, "Файл озвучки не найден")
     req.projects = ok
     story_status.update(busy=True, message="Запускаю…")
@@ -1258,6 +1317,8 @@ class AccountReq(BaseModel):
     device: str = ""  # на каком телефоне или в каком браузере залогинен
     streamer: str = ""
     notes: str = ""
+    blotato_id: str = ""  # какой аккаунт Blotato соответствует этому аккаунту
+    autopost: bool = False  # выкладывать самому по расписанию (нужен ключ Blotato)
 
 
 @app.post("/api/accounts")
@@ -1356,6 +1417,7 @@ def main() -> None:
     load_state()
     manager.start()
     threading.Thread(target=trends_loop, daemon=True).start()
+    threading.Thread(target=publish_loop, daemon=True).start()
     host = os.environ.get("CLIPPER_HOST", "127.0.0.1")
     if host != "127.0.0.1" and not PASSWORD:
         sys.exit("Чтобы открыть панель в сеть, задайте пароль: CLIPPER_PASSWORD=...")

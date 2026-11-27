@@ -24,12 +24,29 @@ def split_sentences(text: str) -> list[str]:
     return [s.strip() for s in re.split(r"(?<=[.!?…])\s+", text.strip()) if s.strip()]
 
 
-def speak(text: str, out: Path, voice: str = "Milena") -> Path:
-    """Озвучка встроенным голосом macOS (команда say). На других системах — загрузите свою озвучку."""
+EDGE_VOICES = {"edge:ru-RU-DmitryNeural": "Дмитрий (онлайн)", "edge:ru-RU-SvetlanaNeural": "Светлана (онлайн)"}
+
+
+def speak(text: str, out: Path, voice: str = "") -> Path:
+    """Озвучка текста. Голоса edge:* — бесплатные онлайн-голоса Microsoft через edge-tts (нужен интернет,
+    доступ неофициальный); иначе — встроенный голос macOS."""
+    if not voice:
+        voice = "edge:ru-RU-DmitryNeural" if shutil.which("edge-tts") else "mac"
+    if voice.startswith("edge:"):
+        if not shutil.which("edge-tts"):
+            raise RuntimeError("Не установлен edge-tts: pip install edge-tts")
+        mp3 = out.with_suffix(".mp3")
+        proc = subprocess.run(["edge-tts", "--voice", voice[5:], "--text", text, "--write-media", str(mp3)],
+                              capture_output=True, text=True, timeout=300)
+        if proc.returncode != 0 or not mp3.exists() or mp3.stat().st_size < 1000:
+            raise RuntimeError("Онлайн-озвучка не сработала (нужен интернет). Загрузите свой файл в «Материалы → Озвучка».")
+        run(["ffmpeg", "-y", "-v", "error", "-i", str(mp3), str(out)])
+        mp3.unlink(missing_ok=True)
+        return out
     if platform.system() != "Darwin" or not shutil.which("say"):
-        raise RuntimeError("Встроенная озвучка есть только на macOS. Загрузите файл озвучки в «Материалы → Озвучка».")
+        raise RuntimeError("Встроенный голос есть только на macOS. Выберите онлайн-голос или загрузите свою озвучку.")
     aiff = out.with_suffix(".aiff")
-    run(["say", "-v", voice, "-o", str(aiff), text])
+    run(["say", "-v", "Milena", "-o", str(aiff), text])
     run(["ffmpeg", "-y", "-v", "error", "-i", str(aiff), str(out)])
     aiff.unlink(missing_ok=True)
     return out

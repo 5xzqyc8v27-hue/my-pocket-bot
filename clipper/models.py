@@ -136,6 +136,8 @@ class Preset(BaseModel):
     brightness: float = 0.0
     contrast: float = 1.0
     saturation: float = 1.0
+    lut: str = ""  # цветокор: файл .cube из материалов («владелец/luts/имя») или путь
+    lut_strength: float = 1.0
     border: int = 0
     border_color: str = "FFFFFF"
     chat_nick_color: str = "A970FF"

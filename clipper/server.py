@@ -78,7 +78,8 @@ state: dict = {"projects": {}, "references": {}, "streamers": {}, "watch": {}, "
 ASSETS = DATA / "assets"
 KINDS = {"photos": "Фото и вырезки", "emoji": "Эмодзи и стикеры", "fonts": "Шрифты", "sounds": "Звуки",
          "banners": "Баннеры", "fillers": "Залипалки", "templates": "Шаблоны",
-         "memes": "Мем-вставки", "music": "Музыка", "voice": "Озвучка"}
+         "memes": "Мем-вставки", "music": "Музыка", "voice": "Озвучка",
+         "effects": "Эффекты и переходы", "luts": "Цветокор (LUT)"}
 
 
 def load_state() -> None:
@@ -429,7 +430,7 @@ def preview(req: PreviewReq):
     out = DATA / "preview" / f"{req.project}.jpg"
     req.preset = apply_face(req.preset, p.get("face"))
     try:
-        render_frame(Path(p["video"]), m, req.preset, out, transcript_of(p), filler_of(p, req.preset, m), req.at, fonts_of(p))
+        render_frame(Path(p["video"]), m, req.preset, out, transcript_of(p), filler_of(p, req.preset, m), req.at, fonts_of(p), resolve_asset)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)[-400:])
     return FileResponse(out, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
@@ -1356,16 +1357,16 @@ pack_status: dict = {"busy": False, "message": ""}
 class PackReq(BaseModel):
     url: str
     owner: str = "common"
-    kinds: list[str] = ["memes", "sounds", "music", "fonts", "fillers", "emoji"]
+    kinds: list[str] = ["memes", "sounds", "music", "fonts", "fillers", "emoji", "effects", "luts"]
 
 
 @app.post("/api/packs/gdrive")
 def import_pack(req: PackReq):
-    """Скачивает общую папку Google Диска и раскладывает файлы по разделам материалов."""
+    """Скачивает общую папку Google Диска или Яндекс Диска и раскладывает файлы по разделам материалов."""
     if pack_status["busy"]:
         raise HTTPException(409, "Импорт уже идёт")
     try:
-        packs.folder_id(req.url)
+        packs.check_url(req.url)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc))
     kinds = [k for k in req.kinds if k in packs.KIND_NAMES]

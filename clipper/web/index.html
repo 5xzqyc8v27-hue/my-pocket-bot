@@ -322,6 +322,8 @@ const TABS = {
     ['brightness', 'Яркость', 'range', [-0.15, 0.15, 0.01]],
     ['contrast', 'Контраст', 'range', [0.8, 1.3, 0.01]],
     ['saturation', 'Насыщенность', 'range', [0.6, 1.6, 0.01]],
+    ['lut', 'Цветокор (LUT из материалов)', 'lut'],
+    ['lut_strength', 'Сила цветокора', 'range', [0, 1, 0.05]],
     ['border', 'Рамка, пикс.', 'range', [0, 30, 1]],
     ['border_color', 'Цвет рамки', 'color'],
     ['watermark', 'Ник поверх кадра', 'text'],
@@ -358,6 +360,7 @@ function control([key, label, type, opt]) {
   else if (type === 'range') { input = h('input', {type: 'range', min: opt[0], max: opt[1], step: opt[2], value: v, oninput: e => { out.textContent = e.target.value; setP(key, +e.target.value); }}); }
   else if (type === 'color') { const SW = ['FFFFFF', 'FFE600', 'FFD400', '3DDC4A', '35D0FF', 'FF3DD4', 'A970FF', 'FF5A5A', '000000'];
     input = h('div', {class: 'swatches'}, SW.map(c => h('button', {class: 'swatch' + (c === v ? ' on' : ''), style: 'background:#' + c, title: '#' + c, 'aria-label': 'Цвет ' + c, onclick: () => { setP(key, c); renderMain(); }})), h('input', {type: 'color', value: '#' + v, title: 'Свой цвет', style: 'width:34px;height:26px', oninput: e => setP(key, e.target.value.slice(1).toUpperCase())})); }
+  else if (type === 'lut') { const luts = []; for (const o of new Set([(S.projects[cur] || {}).streamer || 'common', 'common'])) for (const f of ((S.assets[o] || {}).luts || [])) luts.push(`${o}/luts/${f}`); input = h('select', {onchange: e => setP(key, e.target.value)}, [h('option', {value: '', selected: !v}, luts.length ? 'Без цветокора' : 'Нет — загрузите .cube в «Материалы»'), ...[...new Set([v, ...luts].filter(Boolean))].map(f => h('option', {value: f, selected: f === v}, f.split('/').pop().replace(/\.cube$/i, '')))]); }
   else if (type === 'font') { input = h('select', {onchange: e => setP(key, e.target.value)}, [...new Set([v, ...FONTS])].map(f => h('option', {value: f, selected: f === v}, f))); }
   else { input = h('input', {type: 'text', value: v || '', onchange: e => setP(key, e.target.value.trim() || (['banner', 'title_glow'].includes(key) ? null : ''))}); }
   return h('div', {class: 'field'}, h('label', {}, label, out), input);
@@ -440,7 +443,7 @@ function pictureRow(p, m, i, save) {
 }
 function insertsRow(p, m, i) {
   const list = m.inserts || [], refs = [];
-  for (const o of new Set([p.streamer || 'common', 'common'])) for (const k of ['memes', 'emoji', 'sounds', 'photos']) for (const f of ((S.assets[o] || {})[k] || [])) refs.push(`${o}/${k}/${f}`);
+  for (const o of new Set([p.streamer || 'common', 'common'])) for (const k of ['memes', 'emoji', 'sounds', 'photos', 'effects']) for (const f of ((S.assets[o] || {})[k] || [])) refs.push(`${o}/${k}/${f}`);
   const put = arr => api(`/api/projects/${p.id}/moments/${i}/inserts`, 'PUT', {inserts: arr}).then(() => refresh(true)).catch(e => alert(e.message));
   let sel, at;
   return h('div', {style: 'margin-top:8px;border-top:1px solid var(--line);padding-top:8px'},
@@ -475,8 +478,8 @@ function renderAssets() {
       h('div', {class: 'field'}, h('label', {}, 'Или скачать по ссылке (YouTube, TikTok и др.) в этот раздел'), h('div', {class: 'row'},
         linkIn = h('input', {type: 'text', placeholder: 'https://…'}),
         h('button', {class: 'btn', style: 'flex:none', onclick: async () => { try { await api(`/api/assets/${encodeURIComponent(owner)}/${kind}/fetch`, 'POST', {url: linkIn.value}); linkIn.value = ''; refresh(true); } catch (e) { alert(e.message); } }}, 'Скачать'))),
-      h('div', {class: 'field'}, h('label', {}, 'Импорт пака с Google Диска — ссылка на общую папку; файлы сами разложатся по разделам'), h('div', {class: 'row'},
-        packIn = h('input', {type: 'text', placeholder: 'https://drive.google.com/drive/folders/…'}),
+      h('div', {class: 'field'}, h('label', {}, 'Импорт пака с Google Диска или Яндекс Диска — ссылка на общую папку; файлы сами разложатся по разделам'), h('div', {class: 'row'},
+        packIn = h('input', {type: 'text', placeholder: 'drive.google.com/drive/folders/… или disk.yandex.ru/d/…'}),
         h('button', {class: 'btn', style: 'flex:none', disabled: !!S.pack_status.busy, onclick: async () => { try { await api('/api/packs/gdrive', 'POST', {url: packIn.value, owner}); refresh(true); } catch (e) { alert(e.message); } }}, S.pack_status.busy ? 'Импортирую…' : 'Импортировать пак'))),
       S.pack_status.message ? h('div', {class: 'mute', style: 'margin-bottom:10px'}, S.pack_status.message) : null,
       S.fetching.length ? h('div', {class: 'mute', style: 'margin-bottom:10px'}, 'Скачивается: ' + S.fetching.join('; ')) : null,

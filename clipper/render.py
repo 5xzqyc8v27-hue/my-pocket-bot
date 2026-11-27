@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -49,16 +50,25 @@ def insert_filters(inserts: list, first_input: int, preset: Preset, last: str) -
                 else f"scale={int(W * ins.scale) // 2 * 2}:-2")
         # в раскладке с чатом середину кадра занимает сообщение — вставки уходят в нижнюю половину
         place = "bottom" if preset.layout == "chat" and ins.place in ("center", "top") else ins.place
-        parts += [f"[{idx}:v]{size},format=rgba,setpts=PTS-STARTPTS+{ins.at:.3f}/TB[in{n}]",
+        window = f"enable='between(t,{ins.at:.3f},{ins.at + ins.duration:.3f})'"
+        if ins.effect:  # футаж на чёрном фоне (глитч, вспышка, пыль) — накладываем осветлением на весь кадр
+            parts += [f"[{idx}:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={preset.fps},"
+                      f"format=gbrp,setpts=PTS-STARTPTS+{ins.at:.3f}/TB[in{n}]",
+                      f"[{last}]fps={preset.fps},format=gbrp[bs{n}]",
+                      f"[bs{n}][in{n}]blend=all_mode=screen:eof_action=pass:{window}[vi{n}]"]
+            last = f"vi{n}"
+            continue
+        key = f",chromakey=0x{ins.key}:0.16:0.08" if ins.key else ""
+        parts += [f"[{idx}:v]{size},format=rgba{key},setpts=PTS-STARTPTS+{ins.at:.3f}/TB[in{n}]",
                   f"[{last}][in{n}]overlay=(W-w)/2:{PLACE_Y.get(place, PLACE_Y['center'])}"
-                  f":enable='between(t,{ins.at:.3f},{ins.at + ins.duration:.3f})':eof_action=pass[vi{n}]"]
+                  f":{window}:eof_action=pass[vi{n}]"]
         last = f"vi{n}"
     return parts, last
 
 
 def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: str | None,
                  camera: str | None = None, inserts: list | None = None, first_insert: int = 0,
-                 chat_rows: int = 0, cam_times: list | None = None) -> str:
+                 chat_rows: int = 0, cam_times: list | None = None, lut_name: str | None = None) -> str:
     """Собирает filter_complex под раскладку. Входы: 0 — исходник, 1 — залипалка, далее баннер."""
     W, H = preset.width, preset.height
     layout = preset.layout
@@ -137,6 +147,12 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
         more, last = insert_filters(inserts, first_insert, preset, last)
         parts += more
     tail = f"fps={preset.fps},setsar=1"
+    if lut_name:  # цветокор: смешиваем с исходной картинкой по силе
+        k = max(0.0, min(1.0, preset.lut_strength))
+        look = f"lut3d={lut_name}" if k >= 0.99 else (
+            f"split[l0][l1];[l1]lut3d={lut_name}[l2];[l0][l2]blend=all_expr='A*{1 - k:.2f}+B*{k:.2f}'")
+        parts.append(f"[{last}]format=gbrp,{look}[vl]")
+        last = "vl"
     if preset.border > 0:
         tail += f",drawbox=0:0:iw:ih:color=0x{preset.border_color}@1:t={preset.border}"
     if ass_name:
@@ -148,8 +164,14 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
 def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcript | None,
              filler: Path | None, tmp: Path, camera: str | None = None,
              inserts: list | None = None, cam_times: list | None = None,
-             fonts: list[Path] | None = None) -> list[str]:
+             fonts: list[Path] | None = None, resolve=None) -> list[str]:
     """Общая часть команды ffmpeg для ролика и для кадра предпросмотра."""
+    lut_name = None
+    if preset.lut:
+        lut = Path(resolve(preset.lut)) if resolve else Path(preset.lut)
+        if lut.is_file():
+            lut_name = "look.cube"
+            shutil.copyfile(lut, tmp / lut_name)
     use_filler = bool(filler) and preset.layout in ("split", "chat")
     banner = Path(preset.banner) if preset.banner else None
     if banner and not banner.exists():
@@ -184,11 +206,15 @@ def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcrip
         ins.index = k
         if ins.file.lower().endswith(IMAGE_EXT):
             cmd += ["-loop", "1", "-t", f"{ins.duration:.3f}"]
+        elif ins.file.lower().endswith(".gif"):
+            cmd += ["-ignore_loop", "0", "-t", f"{ins.duration:.3f}"]
+        elif ins.file.lower().endswith(".webm"):  # прозрачность в webm читает только этот декодер
+            cmd += ["-c:v", "libvpx-vp9", "-stream_loop", "-1", "-t", f"{ins.duration:.3f}"]
         elif not ins.file.lower().endswith(AUDIO_EXT):
             cmd += ["-t", f"{ins.duration:.3f}"]
         cmd += ["-i", ins.file]
     return cmd + ["-filter_complex", build_filter(preset, use_filler, bool(banner), ass_name, camera,
-                                                  inserts, first, rows, cam_times)]
+                                                  inserts, first, rows, cam_times, lut_name)]
 
 
 class _Ins:
@@ -196,6 +222,31 @@ class _Ins:
 
     def __init__(self, file: str, at: float, duration: float, place: str, scale: float):
         self.file, self.at, self.duration, self.place, self.scale, self.index = file, at, duration, place, scale, 0
+        self.effect = Path(file).parent.name == "effects"
+        self.key = "" if self.effect else screen_key(Path(file))
+
+
+def screen_key(path: Path) -> str:
+    """Цвет хромакея, если вставка — видео на сплошном зелёном или синем фоне, иначе пустая строка."""
+    if path.suffix.lower() not in (".mp4", ".mov", ".webm", ".m4v"):
+        return ""
+    try:
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1", "-vf", "scale=32:32",
+                              "-f", "rawvideo", "-pix_fmt", "rgba", "-"], capture_output=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if len(raw) < 32 * 32 * 4:
+        return ""
+    px = lambda x, y: raw[(y * 32 + x) * 4:(y * 32 + x) * 4 + 4]
+    corners = [px(0, 0), px(31, 0), px(0, 31), px(31, 31)]
+    if any(c[3] < 250 for c in corners):
+        return ""  # у файла своя прозрачность
+    r, g, b = (sum(c[i] for c in corners) // 4 for i in range(3))
+    if max(max(c[i] for c in corners) - min(c[i] for c in corners) for i in range(3)) > 40:
+        return ""
+    if g > 150 and r < 110 and b < 110 or b > 150 and r < 90 and g < 110:
+        return f"{r:02x}{g:02x}{b:02x}"
+    return ""
 
 
 def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
@@ -246,7 +297,7 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
         if path.exists() and 0 <= ins.at < out_len:
             inserts.append(_Ins(str(path.resolve()), ins.at, min(ins.duration, out_len - ins.at), ins.place, ins.scale))
     with tempfile.TemporaryDirectory() as tmp:
-        cmd = _prepare(source, moment, preset, transcript, filler, Path(tmp), camera, inserts, cam_times, fonts)
+        cmd = _prepare(source, moment, preset, transcript, filler, Path(tmp), camera, inserts, cam_times, fonts, resolve)
         first = 1 + int(bool(filler) and preset.layout in ("split", "chat")) + int(bool(preset.banner and Path(preset.banner).exists()))
         sounds = [i for i in inserts if not i.file.lower().endswith(IMAGE_EXT) and has_audio(Path(i.file))]
         main_audio = has_audio(source)
@@ -274,7 +325,7 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
 
 def render_frame(source: Path, moment: Moment, preset: Preset, out_path: Path,
                  transcript: Transcript | None = None, filler: Path | None = None,
-                 at: float = 0.5, fonts: list[Path] | None = None) -> Path:
+                 at: float = 0.5, fonts: list[Path] | None = None, resolve=None) -> Path:
     """Один кадр ролика (доля at от длины) — для живого предпросмотра раскладки."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     # Прыгаем сразу к нужному месту исходника, чтобы не декодировать весь отрезок.
@@ -282,7 +333,7 @@ def render_frame(source: Path, moment: Moment, preset: Preset, out_path: Path,
     # Кадр берётся в нулевой момент — анимации появления в нём ещё не видно, отключаем их.
     preset = preset.model_copy(update={"title_anim": False, "subtitle_pop": False})
     with tempfile.TemporaryDirectory() as tmp:
-        cmd = _prepare(source, shifted, preset, transcript, filler, Path(tmp), fonts=fonts)
+        cmd = _prepare(source, shifted, preset, transcript, filler, Path(tmp), fonts=fonts, resolve=resolve)
         idx = cmd.index("-filter_complex") + 1
         cmd[idx] = cmd[idx].replace("[out]", "[full]") + ";[full]scale=540:-2[out]"
         cmd += ["-map", "[out]", "-frames:v", "1", "-q:v", "4", str(out_path.resolve())]

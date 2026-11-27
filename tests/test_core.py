@@ -207,3 +207,25 @@ def test_pack_classify_and_names():
     assert classify("Мемы/._скрытый.mp4") is None
     assert target_name("Звуки/Мемные/[ATHENS] сверчки мем.mp3") == "Мемные_сверчки_мем.mp3"
     assert target_name("Мемы/[ATHENS] Cкала удивление.mp4") == "Cкала_удивление.mp4"
+
+
+def test_pack_classify_yandex_folders():
+    from clipper import packs
+    assert packs.is_yandex("https://disk.yandex.ru/d/abc") and not packs.is_yandex("https://drive.google.com/drive/folders/x")
+    assert packs.classify("Эмодзи/100_Crying Cat Face.mov") == "emoji"
+    assert packs.classify("Эмодзи/100_Crying Cat Face.gif") is None
+    assert packs.classify("Эмодзи/AnimatedEmojies_AgAD.mp4") is None
+    assert packs.classify("Луты/Action Looks (1).cube") == "luts"
+    assert packs.classify("Эффекты/Глитч/1.mp4") == "effects"
+    assert packs.classify("Необходимый софт/After Effects.rar") is None
+    assert packs.classify("Инструменты/shake.ffx") is None
+
+
+def test_lut_and_effect_filters():
+    from clipper.models import Preset
+    from clipper.render import build_filter, _Ins
+    p = Preset(name="t")
+    assert "lut3d=look.cube" in build_filter(p, False, False, None, lut_name="look.cube")
+    assert "lut3d" not in build_filter(p, False, False, None)
+    ins = _Ins("/x/common/effects/glitch.mp4", 1.0, 1.5, "full", 1.0)
+    assert ins.effect and "blend=all_mode=screen" in build_filter(p, False, False, None, inserts=[ins], first_insert=1)

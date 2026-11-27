@@ -176,6 +176,24 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
                 resolve=None) -> Path:
     """Вырезает момент и монтирует его в вертикальный ролик."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if preset.teaser > 0:  # тизер: самое громкое место ролика ставим в первую секунду
+        from .moments import loud_peaks
+        peaks = loud_peaks(source, moment.start, moment.duration, count=1)
+        plain = preset.model_copy(update={"teaser": 0.0})
+        if peaks and peaks[0] > preset.teaser + 3:
+            lead = moment.model_copy(update={"start": moment.start + max(0.0, peaks[0] - 0.3),
+                                             "end": moment.start + peaks[0] - 0.3 + preset.teaser, "inserts": []})
+            with tempfile.TemporaryDirectory() as tmp:
+                a, b = Path(tmp) / "a.mp4", Path(tmp) / "b.mp4"
+                render_clip(source, lead, plain.model_copy(update={"camera": "none", "title_anim": False}), a,
+                            transcript, filler)
+                render_clip(source, moment, plain, b, transcript, filler, resolve)
+                (Path(tmp) / "list.txt").write_text("file 'a.mp4'\nfile 'b.mp4'", encoding="utf-8")
+                run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", "list.txt",
+                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k",
+                     "-movflags", "+faststart", str(out_path.resolve())], cwd=Path(tmp))
+            return out_path
+        preset = plain
     out_len = moment.duration / preset.speed
     peaks = []
     if preset.camera in ("punch", "both"):

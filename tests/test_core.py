@@ -84,3 +84,13 @@ def test_chat_spikes_and_rechat_parse():
     raw = {"comments": [{"content_offset_seconds": 12.5, "commenter": {"display_name": "Vasya"},
                          "message": {"body": "привет"}}, {"broken": 1}]}
     assert parse_rechat(raw) == [{"t": 12.5, "user": "Vasya", "text": "привет"}]
+
+
+def test_schedule_slots_spread_and_skip_taken():
+    import time
+    from clipper.schedule import next_slots
+    now = time.mktime((2026, 11, 27, 8, 0, 0, 0, 0, -1))
+    slots = next_slots([], 3, per_day=2, from_hour=10, to_hour=22, now=now)
+    hours = [time.localtime(s).tm_hour for s in slots]
+    assert hours == [13, 19, 13] and time.localtime(slots[2]).tm_mday == 28
+    assert next_slots([slots[0]], 1, 2, 10, 22, now)[0] == slots[1]

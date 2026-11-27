@@ -110,6 +110,7 @@ class Preset(BaseModel):
     title_y: float = 0.12
     title_glow: str | None = None  # цвет неонового свечения, например A020F0
     title_anim: bool = False  # появление с увеличением
+    teaser: float = 0.0  # секунд самого громкого места в самом начале ролика (0 — без тизера)
     # субтитры
     subtitles: bool = True
     subtitle_size: int = 72

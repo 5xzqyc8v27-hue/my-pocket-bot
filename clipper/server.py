@@ -19,6 +19,8 @@ from pydantic import BaseModel
 from .analysis import detect_scenes, uniqueness
 from .capcut import default_drafts_dir, export_draft
 from . import history, llm
+from . import story as story_mod
+from .schedule import next_slots
 from .chat import chat_spikes, find_read_messages, load_chat
 from .compile import find_themes, render_compilation
 from .media import fetch, probe
@@ -69,11 +71,11 @@ async def require_password(request: Request, call_next):
                                 headers={"WWW-Authenticate": 'Basic realm="Clipper"'})
     return await call_next(request)
 lock = threading.RLock()
-state: dict = {"projects": {}, "references": {}, "streamers": {}, "watch": {}, "trend_videos": {}, "accounts": {}, "themes": {}}
+state: dict = {"projects": {}, "references": {}, "streamers": {}, "watch": {}, "trend_videos": {}, "accounts": {}, "themes": {}, "queue": {}}
 ASSETS = DATA / "assets"
 KINDS = {"photos": "Фото и вырезки", "emoji": "Эмодзи и стикеры", "fonts": "Шрифты", "sounds": "Звуки",
          "banners": "Баннеры", "fillers": "Залипалки", "templates": "Шаблоны",
-         "memes": "Мем-вставки", "music": "Музыка"}
+         "memes": "Мем-вставки", "music": "Музыка", "voice": "Озвучка"}
 
 
 def load_state() -> None:
@@ -86,7 +88,7 @@ def load_state() -> None:
     state.setdefault("references", {})
     for st in state["streamers"].values():
         st.update(recording=False, live=False, working="", last_check=0)
-    for key in ("watch", "trend_videos", "accounts", "themes"):
+    for key in ("watch", "trend_videos", "accounts", "themes", "queue"):
         state.setdefault(key, {})
     for r in state["references"].values():
         if r["status"] == "work":
@@ -279,7 +281,8 @@ def get_state():
                 "assets": list_assets(), "kinds": KINDS, "streamers": state["streamers"],
                 "disk_free_gb": round(shutil.disk_usage(DATA).free / 1e9, 1),
                 "watch": state["watch"], "accounts": state["accounts"], "profile": PROFILE,
-                "themes": state["themes"], "theme_status": theme_status,
+                "themes": state["themes"], "theme_status": theme_status, "queue": state["queue"],
+                "story_status": story_status, "mac_voice": story_mod.platform.system() == "Darwin",
                 "fetching": sorted(fetching)}
 
 
@@ -714,6 +717,175 @@ def render_theme(tid: str, req: ThemeRenderReq):
     with lock:
         th.update(status="work", message="Монтирую…")
     threading.Thread(target=theme_render_job, args=(tid, req), daemon=True).start()
+    return {"ok": True}
+
+
+# ---------- очередь публикаций ----------
+
+class QueueReq(BaseModel):
+    project: str
+    files: list[str]
+    accounts: list[str] = []  # пусто — все аккаунты, подходящие стримеру проекта
+    per_day: int = 2
+    from_hour: int = 10
+    to_hour: int = 22
+
+
+class QueuePatch(BaseModel):
+    status: str | None = None  # scheduled, published, skipped
+    shift_hours: float | None = None
+    caption: str | None = None
+
+
+@app.post("/api/queue")
+def add_to_queue(req: QueueReq):
+    """Ставит ролики в расписание: для каждого аккаунта — ближайшие свободные слоты."""
+    p = project(req.project)
+    ids = req.accounts or [a["id"] for a in state["accounts"].values()
+                           if not a.get("streamer") or a["streamer"] == p.get("streamer")]
+    ids = [i for i in ids if i in state["accounts"]]
+    if not ids:
+        raise HTTPException(400, "Сначала добавьте аккаунты во вкладке «Аккаунты»")
+    clips = [c for c in p.get("clips", []) if c["file"] in req.files]
+    if not clips:
+        raise HTTPException(400, "Выберите ролики")
+    made = 0
+    with lock:
+        for aid in ids:
+            taken = [q["when"] for q in state["queue"].values() if q["account"] == aid and q["status"] != "skipped"]
+            fresh = [c for c in clips if not any(q["account"] == aid and q["file"] == c["file"] and
+                                                 q["project"] == p["id"] for q in state["queue"].values())]
+            for clip, when in zip(fresh, next_slots(taken, len(fresh), req.per_day, req.from_hour, req.to_hour)):
+                qid = uuid.uuid4().hex[:8]
+                tags = " ".join("#" + t.lstrip("#") for t in clip.get("hashtags", []))
+                state["queue"][qid] = {"id": qid, "project": p["id"], "file": clip["file"], "account": aid,
+                                       "title": clip["title"], "when": when, "status": "scheduled",
+                                       "caption": " ".join(x for x in (clip.get("caption") or clip["title"], tags) if x)}
+                made += 1
+    save_state()
+    return {"added": made}
+
+
+@app.patch("/api/queue/{qid}")
+def patch_queue(qid: str, patch: QueuePatch):
+    q = state["queue"].get(qid)
+    if not q:
+        raise HTTPException(404, "Запись не найдена")
+    with lock:
+        if patch.status in ("scheduled", "published", "skipped"):
+            q["status"] = patch.status
+            if patch.status == "published":
+                q["published_at"] = time.time()
+        if patch.shift_hours:
+            q["when"] += patch.shift_hours * 3600
+            q["status"] = "scheduled"
+        if patch.caption is not None:
+            q["caption"] = patch.caption
+    save_state()
+    return q
+
+
+@app.delete("/api/queue/{qid}")
+def delete_queue(qid: str):
+    with lock:
+        state["queue"].pop(qid, None)
+    save_state()
+    return {"ok": True}
+
+
+@app.post("/api/queue/cleanup")
+def cleanup_published(dry_run: bool = True, older_hours: float = 24):
+    """Удаляет файлы роликов, которые вышли во всех аккаунтах больше older_hours назад."""
+    edge = time.time() - older_hours * 3600
+    by_file: dict = {}
+    for q in state["queue"].values():
+        by_file.setdefault((q["project"], q["file"]), []).append(q)
+    targets = [(pid, f) for (pid, f), posts in by_file.items()
+               if all(x["status"] in ("published", "skipped") for x in posts)
+               and any(x["status"] == "published" for x in posts)
+               and max(x.get("published_at", 0) for x in posts) < edge
+               and (DATA / "clips" / pid / f).exists()]
+    size = sum((DATA / "clips" / pid / f).stat().st_size for pid, f in targets)
+    if not dry_run:
+        with lock:
+            for pid, f in targets:
+                (DATA / "clips" / pid / f).unlink()
+                if pid in state["projects"]:
+                    state["projects"][pid]["clips"] = [c for c in state["projects"][pid]["clips"] if c["file"] != f]
+        save_state()
+    return {"files": len(targets), "mb": round(size / 1e6, 1), "deleted": not dry_run}
+
+
+# ---------- ролик-рассказ ----------
+
+story_status: dict = {"busy": False, "message": ""}
+
+
+class ScriptReq(BaseModel):
+    topic: str
+
+
+class StoryReq(BaseModel):
+    script: str
+    title: str = ""
+    voice: str = ""  # материал «владелец/voice/имя»; пусто — встроенный голос macOS
+    projects: list[str]  # из каких исходников брать видеоряд
+    preset: Preset
+    music: str = ""
+
+
+@app.post("/api/story/script")
+def story_script(req: ScriptReq):
+    if not req.topic.strip():
+        raise HTTPException(400, "Введите тему")
+    try:
+        return {"script": llm.ask(f"Тема ролика: {req.topic.strip()}", story_mod.SCRIPT_SYSTEM, 1500)}
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+
+
+def story_job(req: StoryReq) -> None:
+    try:
+        home = state["projects"][req.projects[0]]
+        broll = [Path(state["projects"][pid]["video"]) for pid in req.projects]
+        work = DATA / "story"
+        work.mkdir(parents=True, exist_ok=True)
+        if req.voice:
+            voice = resolve_asset(req.voice)
+        else:
+            story_status["message"] = "Озвучиваю…"
+            voice = story_mod.speak(req.script, work / f"voice_{uuid.uuid4().hex[:6]}.wav")
+        story_status["message"] = "Монтирую…"
+        name = f"rasskaz_{slug(req.title or req.script[:30])}_{uuid.uuid4().hex[:4]}.mp4"
+        story_mod.render_story(req.script, voice, broll, req.preset, DATA / "clips" / home["id"] / name,
+                               req.title, music=resolve_asset(req.music) if req.music else None)
+        with lock:
+            home.setdefault("clips", []).insert(0, {
+                "file": name, "title": req.title or story_mod.split_sentences(req.script)[0][:60],
+                "caption": "", "hashtags": [], "kind": "story", "score": 0, "profanity": False,
+                "preset": req.preset.name + " · рассказ", "start": 0, "end": 0, "speed": 1.0, "created": time.time()})
+        story_status.update(message="Готово — ролик в проекте «" + home["title"] + "»", project=home["id"])
+    except Exception as exc:
+        traceback.print_exc()
+        story_status["message"] = f"Ошибка: {str(exc)[:300]}"
+    story_status["busy"] = False
+    save_state()
+
+
+@app.post("/api/story")
+def make_story(req: StoryReq):
+    if story_status["busy"]:
+        raise HTTPException(409, "Рассказ уже монтируется")
+    if len(req.script.split()) < 8:
+        raise HTTPException(400, "Сценарий слишком короткий")
+    ok = [pid for pid in req.projects if state["projects"].get(pid, {}).get("video")]
+    if not ok:
+        raise HTTPException(400, "Выберите хотя бы один исходник для видеоряда")
+    if req.voice and not resolve_asset(req.voice).exists():
+        raise HTTPException(400, "Файл озвучки не найден")
+    req.projects = ok
+    story_status.update(busy=True, message="Запускаю…")
+    threading.Thread(target=story_job, args=(req,), daemon=True).start()
     return {"ok": True}
 
 

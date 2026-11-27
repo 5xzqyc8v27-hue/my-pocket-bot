@@ -148,6 +148,7 @@ const TABS = {
     ['title_color', 'Цвет', 'color'],
     ['title_glow', 'Неоновое свечение (цвет RRGGBB, пусто — без него)', 'text'],
     ['title_anim', 'Появление с увеличением', 'bool'],
+    ['teaser', 'Тизер: секунд самого громкого места в самом начале', 'range', [0, 2.5, 0.1]],
   ],
   'Субтитры': [
     ['subtitles', 'Показывать субтитры', 'bool'],
@@ -184,9 +185,9 @@ const SUB_STYLES = {
   'По слову': {subtitle_color: 'FFE600', subtitle_highlight: 'FFFFFF', subtitle_upper: true, subtitle_words: 1, subtitle_size: 100},
   'Спокойные': {subtitle_color: 'E8EAED', subtitle_highlight: 'FF8AD8', subtitle_upper: false, subtitle_words: 4, subtitle_size: 58},
 };
-let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''}, themeStreamer = '', themeMusic = '', styleCount = 1, hist = {}, histPick = {}, histOpt = {preset: 'reaction', focus: '', count: 8};
+let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''}, themeStreamer = '', themeMusic = '', styleCount = 1, hist = {}, histPick = {}, story = {topic: '', script: '', title: '', voice: '', music: '', projects: new Set()}, histOpt = {preset: 'reaction', focus: '', count: 8};
 let view = 'Проект', owner = 'common', kind = 'photos';
-let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: [], themes: {}, theme_status: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
+let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: [], themes: {}, theme_status: {}, queue: {}, story_status: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
 
 const getP = k => k.includes('.') ? preset[k.split('.')[0]][+k.split('.')[1]] : preset[k];
 function setP(k, v) { if (k.includes('.')) { const [a, i] = k.split('.'); preset[a][+i] = v; } else preset[k] = v; queuePreview(); }
@@ -456,6 +457,54 @@ function renderThemes() {
       h('div', {style: 'margin-top:8px'}, t.pieces.map((x, n) => h('div', {class: 'kv'}, h('span', {}, `${n + 1}. ${(S.projects[x.project] || {}).title || 'трансляция удалена'}`), h('span', {}, `${fmt(x.start)} – ${fmt(x.end)} · ${(x.end - x.start).toFixed(0)} с`)))))) : [h('div', {class: 'empty'}, 'Тем пока нет. Нажмите «Найти темы» — нужны обработанные трансляции с расшифровкой речи.')]));
 }
 
+function renderQueue() {
+  const list = Object.values(S.queue).sort((a, b) => a.when - b.when), now = Date.now() / 1000;
+  const state = q => q.status === 'published' ? ['вышло', 'good'] : q.status === 'skipped' ? ['пропущено', ''] : q.when <= now ? ['пора выкладывать', 'warn'] : ['в расписании', ''];
+  const patch = (id, body) => api('/api/queue/' + id, 'PATCH', body).then(() => refresh(true));
+  const days = {}; for (const q of list) (days[new Date(q.when * 1000).toLocaleDateString('ru', {weekday: 'short', day: 'numeric', month: 'long'})] ||= []).push(q);
+  $('#main').replaceChildren(
+    h('div', {}, h('h1', {}, 'Публикация'), h('div', {class: 'mute'}, 'Расписание по аккаунтам. Автовыкладка пока не подключена: когда подходит время, скачайте ролик, выложите и нажмите «Выложено». Ролики ставятся сюда кнопкой «В очередь» в проекте.')),
+    h('div', {class: 'tiles'},
+      h('div', {class: 'card tile'}, h('div', {class: 'mute'}, 'В расписании'), h('b', {}, list.filter(q => q.status === 'scheduled' && q.when > now).length)),
+      h('div', {class: 'card tile'}, h('div', {class: 'mute'}, 'Пора выкладывать'), h('b', {}, list.filter(q => q.status === 'scheduled' && q.when <= now).length)),
+      h('div', {class: 'card tile'}, h('div', {class: 'mute'}, 'Вышло за сутки'), h('b', {}, list.filter(q => q.status === 'published' && q.published_at > now - 86400).length)),
+      h('div', {class: 'card tile'}, h('div', {class: 'mute'}, 'Очистка'), h('button', {class: 'btn small', style: 'margin-top:6px', onclick: async () => { const d = await (await api('/api/queue/cleanup?dry_run=true', 'POST')).json(); if (!d.files) return alert('Удалять нечего: нет роликов, вышедших больше суток назад.'); if (confirm(`Удалить с диска вышедшие ролики: ${d.files} шт., ${d.mb} МБ?`)) { await api('/api/queue/cleanup?dry_run=false', 'POST'); refresh(true); } }}, 'Удалить вышедшие'))),
+    ...(list.length ? Object.entries(days).map(([day, items]) => h('div', {class: 'card'}, h('h2', {}, day), items.map(q => { const [label, cls] = state(q), a = S.accounts[q.account] || {};
+      return h('div', {style: 'padding:8px 0;border-bottom:1px solid var(--line)'},
+        h('div', {class: 'kv', style: 'font-size:13px'},
+          h('span', {style: 'color:var(--text)'}, new Date(q.when * 1000).toLocaleTimeString('ru', {hour: '2-digit', minute: '2-digit'}), ' · ', h('span', {class: 'pill'}, (a.platform || '?') + ' ' + (a.handle || 'аккаунт удалён')), ' ', h('b', {}, q.title || q.file), ' ', h('span', {class: 'pill ' + cls}, label)),
+          h('span', {style: 'flex:none'},
+            h('a', {class: 'btn small', href: `/clips/${q.project}/${encodeURIComponent(q.file)}`, download: q.file, style: 'text-decoration:none'}, 'Скачать'), ' ',
+            h('button', {class: 'btn small', onclick: () => navigator.clipboard.writeText(q.caption).then(() => alert('Подпись скопирована'))}, 'Копировать подпись'), ' ',
+            q.status !== 'published' && h('button', {class: 'btn small primary', onclick: () => patch(q.id, {status: 'published'})}, 'Выложено'), ' ',
+            q.status !== 'published' && h('button', {class: 'btn small', onclick: () => patch(q.id, {shift_hours: 24})}, 'На день позже'), ' ',
+            h('button', {class: 'btn small', onclick: () => api('/api/queue/' + q.id, 'DELETE').then(() => refresh(true))}, '×'))),
+        h('div', {class: 'mute'}, q.caption)); }))) : [h('div', {class: 'empty'}, 'Расписание пустое.')]));
+}
+function renderStory() {
+  const withVideo = Object.values(S.projects).filter(p => p.video), voices = [], music = [];
+  for (const o of Object.keys(S.assets)) { for (const f of ((S.assets[o] || {}).voice || [])) voices.push(`${o}/voice/${f}`); for (const f of ((S.assets[o] || {}).music || [])) music.push(`${o}/music/${f}`); }
+  let ta;
+  $('#main').replaceChildren(
+    h('div', {}, h('h1', {}, 'Рассказ'), h('div', {class: 'mute'}, 'Ролик с закадровым голосом: сценарий, озвучка, под каждую фразу — свой кусок видеоряда, субтитры по слову. Факты в сценарии проверяйте сами — нейросеть может ошибаться.')),
+    h('div', {class: 'card'}, h('h2', {}, '1 · Сценарий'),
+      h('div', {class: 'row', style: 'margin-bottom:8px'},
+        h('input', {type: 'text', value: story.topic, placeholder: 'Тема, например: 3 мелочи в GTA 6, о которых мало кто знает', oninput: e => { story.topic = e.target.value; }}),
+        h('button', {class: 'btn', style: 'flex:none', onclick: async e => { e.target.disabled = true; e.target.textContent = 'Пишу…'; try { story.script = (await (await api('/api/story/script', 'POST', {topic: story.topic})).json()).script; } catch (er) { alert(er.message); } renderStory(); }}, 'Написать через Claude')),
+      ta = h('textarea', {rows: 7, placeholder: 'Текст для озвучки. Первая фраза — хук, в конце — вопрос к зрителю.', oninput: e => { story.script = e.target.value; }}), 
+      h('div', {class: 'field', style: 'margin-top:8px'}, h('label', {}, 'Надпись сверху (необязательно)'), h('input', {type: 'text', value: story.title, oninput: e => { story.title = e.target.value; }}))),
+    h('div', {class: 'card'}, h('h2', {}, '2 · Озвучка, видеоряд, оформление'),
+      h('div', {class: 'row'},
+        h('div', {class: 'field'}, h('label', {}, 'Озвучка'), h('select', {onchange: e => { story.voice = e.target.value; }}, h('option', {value: ''}, S.mac_voice ? 'Встроенный голос macOS' : 'Загрузите файл в «Материалы → Озвучка»'), voices.map(v => h('option', {value: v, selected: v === story.voice}, v.split('/').pop())))),
+        h('div', {class: 'field'}, h('label', {}, 'Оформление'), h('select', {onchange: e => { preset = structuredClone(S.presets.find(x => x.name === e.target.value)); }}, S.presets.map(x => h('option', {value: x.name, selected: x.name === preset.name}, x.name)))),
+        h('div', {class: 'field'}, h('label', {}, 'Музыка'), h('select', {onchange: e => { story.music = e.target.value; }}, h('option', {value: ''}, 'Без музыки'), music.map(v => h('option', {value: v, selected: v === story.music}, v.split('/').pop()))))),
+      h('div', {class: 'field'}, h('label', {}, 'Видеоряд — из каких исходников брать куски'), withVideo.length ? h('div', {class: 'hooks'}, withVideo.map(p => h('label', {class: 'check', style: 'margin:0 10px 0 0'}, h('input', {type: 'checkbox', checked: story.projects.has(p.id), onchange: e => { e.target.checked ? story.projects.add(p.id) : story.projects.delete(p.id); }}), p.title))) : h('div', {class: 'mute'}, 'Сначала добавьте исходники с игровым видео во вкладке «Проект».')),
+      h('button', {class: 'btn primary', disabled: !!S.story_status.busy, onclick: async () => { try { await api('/api/story', 'POST', {script: story.script, title: story.title, voice: story.voice, music: story.music, projects: [...story.projects], preset}); refresh(true); } catch (e) { alert(e.message); } }}, S.story_status.busy ? 'Монтирую…' : 'Смонтировать рассказ'),
+      S.story_status.message ? h('span', {class: 'mute', style: 'margin-left:10px'}, S.story_status.message) : null,
+      S.story_status.project && !S.story_status.busy ? h('button', {class: 'btn small', style: 'margin-left:10px', onclick: () => { cur = S.story_status.project; view = 'Проект'; renderAll(); }}, 'Открыть ролик') : null));
+  ta.value = story.script;
+}
+
 async function renderHealth() {
   if (!health) { $('#main').replaceChildren(h('div', {class: 'empty'}, 'Проверяю…')); health = await (await api('/api/health')).json(); if (view !== 'Настройка') return; }
   $('#main').replaceChildren(
@@ -471,6 +520,8 @@ function renderMain() {
   if (view === 'Стримеры') return renderStreamers();
   if (view === 'Тренды') return renderTrends();
   if (view === 'Подборки') return renderThemes();
+  if (view === 'Публикация') return renderQueue();
+  if (view === 'Рассказ') return renderStory();
   if (view === 'Аккаунты') return renderAccounts();
   if (view === 'Материалы') return renderAssets();
   if (view === 'Примеры') return renderRefs();
@@ -519,6 +570,7 @@ function renderMain() {
       h('div', {class: 'row', style: 'margin-top:6px'},
         h('button', {class: 'btn small', onclick: async e => { e.target.disabled = true; try { await api(`/api/check/${p.id}/${encodeURIComponent(c.file)}`, 'POST'); } catch (er) { alert(er.message); } refresh(); }}, 'Проверить'),
         h('a', {class: 'btn small', href: `/clips/${p.id}/${encodeURIComponent(c.file)}`, download: c.file, style: 'text-align:center;text-decoration:none'}, 'Скачать'),
+        h('button', {class: 'btn small', title: 'Поставить в расписание публикаций для аккаунтов этого стримера', onclick: async () => { try { const r = await (await api('/api/queue', 'POST', {project: p.id, files: [c.file]})).json(); alert(r.added ? `Добавлено в расписание: ${r.added}. Смотрите вкладку «Публикация».` : 'Этот ролик уже стоит в расписании у всех аккаунтов.'); refresh(true); } catch (er) { alert(er.message); } }}, 'В очередь'),
         h('button', {class: 'btn small', onclick: async () => { if (confirm('Удалить ролик с диска?')) { await api(`/api/clips/${p.id}/${encodeURIComponent(c.file)}`, 'DELETE'); refresh(); } }}, 'Удалить'))))) : h('div', {class: 'mute'}, 'Пока нет — выберите моменты и нажмите «Смонтировать».'));
 
   const photos = ((S.assets[p.streamer] || {}).photos || []);
@@ -533,7 +585,7 @@ function renderMain() {
   updateRenderBtn(); queuePreview();
 }
 
-function renderNav() { $('#nav').replaceChildren(...['Стримеры', 'Проект', 'Подборки', 'Тренды', 'Материалы', 'Примеры', 'Аккаунты', 'Настройка'].map(v => h('button', {class: 'tab' + (v === view ? ' active' : ''), onclick: () => { view = v; renderAll(); }}, v)));
+function renderNav() { $('#nav').replaceChildren(...['Стримеры', 'Проект', 'Подборки', 'Рассказ', 'Публикация', 'Тренды', 'Материалы', 'Примеры', 'Аккаунты', 'Настройка'].map(v => h('button', {class: 'tab' + (v === view ? ' active' : ''), onclick: () => { view = v; renderAll(); }}, v)));
   $('.logo h1').textContent = 'Clipper' + (S.profile ? ' · ' + S.profile : '');
   $('#owners').replaceChildren(...Object.keys(S.assets).filter(o => o !== 'common').map(o => h('option', {value: o}))); }
 function renderAll() { renderNav(); renderProjects(); renderMain(); }
@@ -543,8 +595,8 @@ async function refresh(force) {
   if (!preset) preset = structuredClone(S.presets[0] || S.defaults);
   if (!$('#picker').options.length) $('#picker').append(...['auto', ...S.pickers].map(k => h('option', {value: k}, PICKERS[k] || k)));
   if (!cur || !S.projects[cur]) cur = Object.values(S.projects).sort((a, b) => b.created - a.created)[0]?.id || null;
-  const sig = JSON.stringify([S.projects, S.presets.map(p => p.name), cur, S.assets, S.references, S.watch, S.accounts, S.fetching, S.themes, S.theme_status, Object.values(S.streamers).map(x => ({...x, last_check: 0}))]);
-  if (force || sig !== lastSig && !document.activeElement.matches('main input, main select')) { lastSig = sig; renderAll(); }
+  const sig = JSON.stringify([S.projects, S.presets.map(p => p.name), cur, S.assets, S.references, S.watch, S.accounts, S.fetching, S.themes, S.theme_status, S.queue, S.story_status, Object.values(S.streamers).map(x => ({...x, last_check: 0}))]);
+  if (force || sig !== lastSig && !document.activeElement.matches('main input, main select, main textarea')) { lastSig = sig; renderAll(); }
 }
 $('#add').onclick = async () => {
   const btn = $('#add'); btn.disabled = true;

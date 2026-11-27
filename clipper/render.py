@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 from .media import run
+from .top import has_audio
 from .models import Moment, Preset, Transcript
 from .subtitles import build_ass
 
@@ -30,8 +31,27 @@ def camera_filter(preset: Preset, length: float, peaks: list[float]) -> str | No
             f":d=1:s={preset.width}x{preset.height}:fps={fps}")
 
 
+IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp")
+AUDIO_EXT = (".mp3", ".wav", ".ogg", ".m4a", ".aac")
+PLACE_Y = {"top": "H*0.22-h/2", "center": "(H-h)/2", "bottom": "H*0.78-h/2", "full": "0"}
+
+
+def insert_filters(inserts: list, first_input: int, preset: Preset, last: str) -> tuple[list[str], str]:
+    """Видеочасть вставок: каждая показывается в своё окно времени поверх кадра."""
+    parts = []
+    for n, ins in enumerate(i for i in inserts if not i.file.lower().endswith(AUDIO_EXT)):
+        idx, W, H = first_input + ins.index, preset.width, preset.height
+        size = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}" if ins.place == "full"
+                else f"scale={int(W * ins.scale) // 2 * 2}:-2")
+        parts += [f"[{idx}:v]{size},format=rgba,setpts=PTS-STARTPTS+{ins.at:.3f}/TB[in{n}]",
+                  f"[{last}][in{n}]overlay=(W-w)/2:{PLACE_Y.get(ins.place, PLACE_Y['center'])}"
+                  f":enable='between(t,{ins.at:.3f},{ins.at + ins.duration:.3f})':eof_action=pass[vi{n}]"]
+        last = f"vi{n}"
+    return parts, last
+
+
 def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: str | None,
-                 camera: str | None = None) -> str:
+                 camera: str | None = None, inserts: list | None = None, first_insert: int = 0) -> str:
     """Собирает filter_complex под раскладку. Входы: 0 — исходник, 1 — залипалка, далее баннер."""
     W, H = preset.width, preset.height
     layout = preset.layout
@@ -84,6 +104,9 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
         parts += [f"[{idx}:v]scale={bw}:-2[bn]",
                   f"[{last}][bn]overlay=(W-w)/2:H*{preset.banner_y}-h/2[vb]"]
         last = "vb"
+    if inserts:
+        more, last = insert_filters(inserts, first_insert, preset, last)
+        parts += more
     tail = f"fps={preset.fps},setsar=1"
     if preset.border > 0:
         tail += f",drawbox=0:0:iw:ih:color=0x{preset.border_color}@1:t={preset.border}"
@@ -94,7 +117,8 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
 
 
 def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcript | None,
-             filler: Path | None, tmp: Path, camera: str | None = None) -> list[str]:
+             filler: Path | None, tmp: Path, camera: str | None = None,
+             inserts: list | None = None) -> list[str]:
     """Общая часть команды ffmpeg для ролика и для кадра предпросмотра."""
     use_filler = bool(filler) and preset.layout == "split"
     banner = Path(preset.banner) if preset.banner else None
@@ -113,11 +137,28 @@ def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcrip
         cmd += ["-stream_loop", "-1", "-i", str(Path(filler).resolve())]
     if banner:
         cmd += ["-i", str(banner.resolve())]
-    return cmd + ["-filter_complex", build_filter(preset, use_filler, bool(banner), ass_name, camera)]
+    first = 1 + int(use_filler) + int(bool(banner))
+    for k, ins in enumerate(inserts or []):
+        ins.index = k
+        if ins.file.lower().endswith(IMAGE_EXT):
+            cmd += ["-loop", "1", "-t", f"{ins.duration:.3f}"]
+        elif not ins.file.lower().endswith(AUDIO_EXT):
+            cmd += ["-t", f"{ins.duration:.3f}"]
+        cmd += ["-i", ins.file]
+    return cmd + ["-filter_complex", build_filter(preset, use_filler, bool(banner), ass_name, camera,
+                                                  inserts, first)]
+
+
+class _Ins:
+    """Вставка с уже найденным файлом и временем в готовом ролике."""
+
+    def __init__(self, file: str, at: float, duration: float, place: str, scale: float):
+        self.file, self.at, self.duration, self.place, self.scale, self.index = file, at, duration, place, scale, 0
 
 
 def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
-                transcript: Transcript | None = None, filler: Path | None = None) -> Path:
+                transcript: Transcript | None = None, filler: Path | None = None,
+                resolve=None) -> Path:
     """Вырезает момент и монтирует его в вертикальный ролик."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_len = moment.duration / preset.speed
@@ -126,11 +167,30 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
         from .moments import loud_peaks
         peaks = [p / preset.speed for p in loud_peaks(source, moment.start, moment.duration)]
     camera = camera_filter(preset, out_len, peaks)
+    inserts = []
+    for ins in moment.inserts:
+        path = Path(resolve(ins.file)) if resolve else Path(ins.file)
+        if path.exists() and 0 <= ins.at < out_len:
+            inserts.append(_Ins(str(path.resolve()), ins.at, min(ins.duration, out_len - ins.at), ins.place, ins.scale))
     with tempfile.TemporaryDirectory() as tmp:
-        cmd = _prepare(source, moment, preset, transcript, filler, Path(tmp), camera)
-        cmd += ["-map", "[out]", "-map", "0:a?", "-t", f"{out_len:.3f}"]
-        if preset.speed != 1.0:
-            cmd += ["-af", f"atempo={preset.speed}"]
+        cmd = _prepare(source, moment, preset, transcript, filler, Path(tmp), camera, inserts)
+        first = 1 + int(bool(filler) and preset.layout == "split") + int(bool(preset.banner and Path(preset.banner).exists()))
+        sounds = [i for i in inserts if not i.file.lower().endswith(IMAGE_EXT) and has_audio(Path(i.file))]
+        main_audio = has_audio(source)
+        if sounds:  # звук вставок подмешиваем к основной дорожке в нужный момент
+            fc = cmd.index("-filter_complex") + 1
+            mix = [f"[0:a]atempo={preset.speed}[a0]"] if main_audio else []
+            for i in sounds:
+                ms = int(i.at * 1000)
+                mix.append(f"[{first + i.index}:a]atrim=0:{i.duration:.3f},adelay={ms}:all=1,volume=0.9[s{i.index}]")
+            labels = ("[a0]" if main_audio else "") + "".join(f"[s{i.index}]" for i in sounds)
+            mix.append(f"{labels}amix=inputs={len(sounds) + int(main_audio)}:normalize=0:duration=longest[aout]")
+            cmd[fc] += ";" + ";".join(mix)
+            cmd += ["-map", "[out]", "-map", "[aout]", "-t", f"{out_len:.3f}"]
+        else:
+            cmd += ["-map", "[out]", "-map", "0:a?", "-t", f"{out_len:.3f}"]
+            if preset.speed != 1.0:
+                cmd += ["-af", f"atempo={preset.speed}"]
         cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
                 "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out_path.resolve())]
         run(cmd, cwd=Path(tmp))  # cwd = tmp, чтобы не экранировать путь к субтитрам

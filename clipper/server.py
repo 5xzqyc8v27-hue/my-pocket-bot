@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import random
 import shutil
+import subprocess
 import re
 import threading
 import time
@@ -18,7 +19,8 @@ from pydantic import BaseModel
 from .analysis import detect_scenes, uniqueness
 from .capcut import default_drafts_dir, export_draft
 from .media import fetch, probe
-from .models import Moment, Preset, Transcript
+from . import trends
+from .models import Insert, Moment, Preset, Transcript
 from .moments import available_pickers, pick
 from .reference import analyze_reference
 from .render import render_clip, render_frame
@@ -26,22 +28,53 @@ from .streams import StreamManager
 from .top import render_top
 from .variety import vary
 
+import os
+import sys
+
+
+def _arg(name: str, default: str = "") -> str:
+    return sys.argv[sys.argv.index(name) + 1] if name in sys.argv[:-1] else default
+
+
 ROOT = Path(__file__).resolve().parent.parent
 PRESETS = ROOT / "presets"
-DATA = ROOT / "data"
+# Профиль — отдельное рабочее пространство пользователя: свои проекты, стримеры, аккаунты и файлы.
+PROFILE = re.sub(r"[^\w-]", "", os.environ.get("CLIPPER_PROFILE") or _arg("--profile"))
+PASSWORD = os.environ.get("CLIPPER_PASSWORD", "")
+PORT = int(_arg("--port", "8765"))
+DATA = ROOT / "data" / "profiles" / PROFILE if PROFILE else ROOT / "data"
 STATE_FILE = DATA / "state.json"
 WEB = Path(__file__).resolve().parent / "web"
 
 app = FastAPI(title="Clipper")
+
+
+@app.middleware("http")
+async def require_password(request: Request, call_next):
+    """Если задан CLIPPER_PASSWORD, панель открывается только по паролю (логин любой)."""
+    if PASSWORD:
+        import base64
+        import secrets
+        given = request.headers.get("authorization", "")
+        try:
+            ok = given.startswith("Basic ") and secrets.compare_digest(
+                base64.b64decode(given[6:]).decode().split(":", 1)[1], PASSWORD)
+        except Exception:
+            ok = False
+        if not ok:
+            return JSONResponse({"detail": "Нужен пароль"}, status_code=401,
+                                headers={"WWW-Authenticate": 'Basic realm="Clipper"'})
+    return await call_next(request)
 lock = threading.RLock()
-state: dict = {"projects": {}, "references": {}, "streamers": {}}
+state: dict = {"projects": {}, "references": {}, "streamers": {}, "watch": {}, "trend_videos": {}, "accounts": {}}
 ASSETS = DATA / "assets"
 KINDS = {"photos": "Фото и вырезки", "emoji": "Эмодзи и стикеры", "fonts": "Шрифты", "sounds": "Звуки",
-         "banners": "Баннеры", "fillers": "Залипалки", "templates": "Шаблоны"}
+         "banners": "Баннеры", "fillers": "Залипалки", "templates": "Шаблоны",
+         "memes": "Мем-вставки"}
 
 
 def load_state() -> None:
-    DATA.mkdir(exist_ok=True)
+    DATA.mkdir(parents=True, exist_ok=True)
     if STATE_FILE.exists():
         loaded = json.loads(STATE_FILE.read_text(encoding="utf-8"))
         streamers = loaded.pop("streamers", {})
@@ -50,6 +83,8 @@ def load_state() -> None:
     state.setdefault("references", {})
     for st in state["streamers"].values():
         st.update(recording=False, live=False, working="", last_check=0)
+    for key in ("watch", "trend_videos", "accounts"):
+        state.setdefault(key, {})
     for r in state["references"].values():
         if r["status"] == "work":
             r["status"], r["message"] = "error", "Прервано перезапуском панели"
@@ -137,7 +172,7 @@ def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False)
             preset = vary(base, seed=int(time.time() * 1000) + i) if varied else base
             set_status(p, "render", f"Монтирую {n} из {len(indexes)}: {m.title or 'без названия'}")
             name = f"{int(m.start):05d}_{slug(m.title)}_{preset.name}_{uuid.uuid4().hex[:4]}.mp4"
-            render_clip(video, m, preset, out_dir / name, tr, filler_of(p))
+            render_clip(video, m, preset, out_dir / name, tr, filler_of(p), resolve=resolve_asset)
             with lock:
                 p.setdefault("clips", []).insert(0, {
                     "file": name, "title": m.title, "caption": m.caption, "hashtags": m.hashtags,
@@ -198,7 +233,9 @@ def get_state():
         return {"projects": state["projects"], "presets": presets, "pickers": available_pickers(),
                 "defaults": Preset().model_dump(), "references": state["references"],
                 "assets": list_assets(), "kinds": KINDS, "streamers": state["streamers"],
-                "disk_free_gb": round(shutil.disk_usage(DATA).free / 1e9, 1)}
+                "disk_free_gb": round(shutil.disk_usage(DATA).free / 1e9, 1),
+                "watch": state["watch"], "accounts": state["accounts"], "profile": PROFILE,
+                "fetching": sorted(fetching)}
 
 
 @app.get("/api/health")
@@ -593,6 +630,203 @@ def capcut(req: CapcutReq):
     return {"path": str(path), "capcut_found": found}
 
 
+def resolve_asset(ref: str) -> Path:
+    """«владелец/тип/имя» -> путь к файлу в материалах."""
+    parts = ref.split("/")
+    if len(parts) == 3 and parts[1] in KINDS:
+        return ASSETS / slug(parts[0], "common") / parts[1] / Path(parts[2]).name
+    return Path(ref)
+
+
+# ---------- вставки в момент ----------
+
+class InsertsReq(BaseModel):
+    inserts: list[Insert]
+
+
+@app.put("/api/projects/{pid}/moments/{i}/inserts")
+def set_inserts(pid: str, i: int, req: InsertsReq):
+    p = project(pid)
+    if not 0 <= i < len(p["moments"]):
+        raise HTTPException(404, "Момент не найден")
+    with lock:
+        p["moments"][i]["inserts"] = [x.model_dump() for x in req.inserts]
+    save_state()
+    return p["moments"][i]
+
+
+@app.post("/api/projects/{pid}/moments/{i}/auto_inserts")
+def auto_inserts(pid: str, i: int):
+    """Авто-вставки: на самых громких местах ставим случайный мем или эмодзи и звук из материалов."""
+    from .moments import loud_peaks
+    p = project(pid)
+    if not 0 <= i < len(p["moments"]) or not p.get("video"):
+        raise HTTPException(404, "Момент не найден")
+    m = p["moments"][i]
+    pool: dict[str, list[str]] = {"visual": [], "sounds": []}
+    for owner in {p.get("streamer") or "common", "common"}:
+        for kind in ("memes", "emoji", "sounds"):
+            files = list_assets().get(owner, {}).get(kind, [])
+            pool["sounds" if kind == "sounds" else "visual"] += [f"{owner}/{kind}/{f}" for f in files]
+    if not pool["visual"] and not pool["sounds"]:
+        raise HTTPException(400, "Сначала загрузите мем-вставки, эмодзи или звуки во вкладке «Материалы»")
+    peaks = loud_peaks(Path(p["video"]), m["start"], m["end"] - m["start"], count=3) or [
+        round((m["end"] - m["start"]) * 0.5, 2)]
+    made = []
+    for t in peaks:
+        if pool["visual"]:
+            ref = random.choice(pool["visual"])
+            made.append(Insert(file=ref, at=t, duration=1.5, place=random.choice(["top", "center"]),
+                               scale=0.3 if "/emoji/" in ref else 0.5))
+        if pool["sounds"]:
+            made.append(Insert(file=random.choice(pool["sounds"]), at=t, duration=2.0))
+    with lock:
+        m["inserts"] = [x.model_dump() for x in made]
+    save_state()
+    return m
+
+
+# ---------- материалы по ссылке ----------
+
+fetching: set[str] = set()
+
+
+class FetchReq(BaseModel):
+    url: str
+
+
+@app.post("/api/assets/{owner}/{kind}/fetch")
+def fetch_asset(owner: str, kind: str, req: FetchReq):
+    """Скачать мем, звук или залипалку по ссылке прямо в материалы."""
+    if kind not in KINDS:
+        raise HTTPException(400, "Неизвестный тип материала")
+    if not req.url.strip().startswith(("http://", "https://")):
+        raise HTTPException(400, "Нужна ссылка, начинающаяся с http")
+    target = ASSETS / slug(owner, "common") / kind
+    key = f"{owner}/{kind}: {req.url.strip()[:80]}"
+
+    def job():
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            fmt = ["-x", "--audio-format", "mp3"] if kind == "sounds" else [
+                "-f", "bv*[height<=720]+ba/b[height<=720]/b", "--merge-output-format", "mp4"]
+            subprocess.run(["yt-dlp", *fmt, "--no-playlist", "--restrict-filenames",
+                            "-o", str(target / "%(title).60s.%(ext)s"), req.url.strip()],
+                           capture_output=True, timeout=900)
+        finally:
+            fetching.discard(key)
+
+    fetching.add(key)
+    threading.Thread(target=job, daemon=True).start()
+    return {"ok": True}
+
+
+# ---------- мониторинг трендов ----------
+
+class WatchReq(BaseModel):
+    kind: str = "channel"  # channel или topic
+    value: str
+    name: str = ""
+
+
+def refresh_trends(only: str | None = None) -> None:
+    for wid, w in list(state["watch"].items()):
+        if only and wid != only:
+            continue
+        try:
+            entries = trends.fetch_entries(trends.source_url(w["kind"], w["value"]))
+            with lock:
+                trends.merge(state["trend_videos"], entries, wid)
+                w.update(updated=time.time(), error="", count=len(entries))
+        except FileNotFoundError:
+            with lock:
+                w.update(updated=time.time(), error="yt-dlp не установлен (pip install yt-dlp)")
+        except Exception as exc:
+            with lock:
+                w.update(updated=time.time(), error=str(exc)[:300])
+    with lock:  # ролики старше 45 дней больше не нужны
+        old = time.time() - 45 * 86400
+        for vid in [k for k, v in state["trend_videos"].items() if (v.get("ts") or v["first_seen"]) < old]:
+            del state["trend_videos"][vid]
+    save_state()
+
+
+def trends_loop() -> None:
+    while True:
+        due = [w for w in state["watch"].values() if time.time() - w.get("updated", 0) > 3 * 3600]
+        if due:
+            refresh_trends()
+        time.sleep(300)
+
+
+@app.post("/api/watch")
+def add_watch(req: WatchReq):
+    if req.kind not in ("channel", "topic") or not req.value.strip():
+        raise HTTPException(400, "Укажите ссылку на канал или тему")
+    wid = slug(req.name or req.value, "source")
+    with lock:
+        state["watch"][wid] = {"id": wid, "kind": req.kind, "value": req.value.strip(),
+                               "name": req.name.strip() or req.value.strip(), "updated": 0, "error": ""}
+    save_state()
+    threading.Thread(target=refresh_trends, args=(wid,), daemon=True).start()
+    return {"id": wid}
+
+
+@app.delete("/api/watch/{wid}")
+def delete_watch(wid: str):
+    with lock:
+        state["watch"].pop(wid, None)
+        for vid in [k for k, v in state["trend_videos"].items() if v.get("source") == wid]:
+            del state["trend_videos"][vid]
+    save_state()
+    return {"ok": True}
+
+
+@app.post("/api/trends/refresh")
+def trends_refresh():
+    threading.Thread(target=refresh_trends, daemon=True).start()
+    return {"ok": True}
+
+
+@app.get("/api/trends")
+def get_trends(window: str = "24h"):
+    if window not in trends.WINDOWS:
+        raise HTTPException(400, "Окно: 24h, 48h или 30d")
+    with lock:
+        return trends.ranking(state["trend_videos"], window)
+
+
+# ---------- аккаунты соцсетей ----------
+
+class AccountReq(BaseModel):
+    platform: str  # youtube, tiktok, instagram
+    handle: str
+    email: str = ""
+    device: str = ""  # на каком телефоне или в каком браузере залогинен
+    streamer: str = ""
+    notes: str = ""
+
+
+@app.post("/api/accounts")
+def save_account(req: AccountReq):
+    if req.platform not in ("youtube", "tiktok", "instagram") or not req.handle.strip():
+        raise HTTPException(400, "Укажите площадку и имя аккаунта")
+    aid = slug(f"{req.platform}_{req.handle}", "account")
+    with lock:
+        state["accounts"][aid] = {**req.model_dump(), "id": aid, "streamer": slug(req.streamer, "") if req.streamer else "",
+                                  "created": state["accounts"].get(aid, {}).get("created", time.time())}
+    save_state()
+    return {"id": aid}
+
+
+@app.delete("/api/accounts/{aid}")
+def delete_account(aid: str):
+    with lock:
+        state["accounts"].pop(aid, None)
+    save_state()
+    return {"ok": True}
+
+
 def clip_path(pid: str, name: str) -> Path:
     path = (DATA / "clips" / pid / Path(name).name)
     if not path.exists():
@@ -641,8 +875,12 @@ def main() -> None:
     import uvicorn
     load_state()
     manager.start()
-    print("Панель: http://127.0.0.1:8765")
-    uvicorn.run(app, host="127.0.0.1", port=8765, log_level="warning")
+    threading.Thread(target=trends_loop, daemon=True).start()
+    host = os.environ.get("CLIPPER_HOST", "127.0.0.1")
+    if host != "127.0.0.1" and not PASSWORD:
+        sys.exit("Чтобы открыть панель в сеть, задайте пароль: CLIPPER_PASSWORD=...")
+    print(f"Панель: http://{host}:{PORT}" + (f" · профиль «{PROFILE}»" if PROFILE else ""))
+    uvicorn.run(app, host=host, port=PORT, log_level="warning")
 
 
 if __name__ == "__main__":

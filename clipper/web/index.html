@@ -183,9 +183,9 @@ const SUB_STYLES = {
   'По слову': {subtitle_color: 'FFE600', subtitle_highlight: 'FFFFFF', subtitle_upper: true, subtitle_words: 1, subtitle_size: 100},
   'Спокойные': {subtitle_color: 'E8EAED', subtitle_highlight: 'FF8AD8', subtitle_upper: false, subtitle_words: 4, subtitle_size: 58},
 };
-let catFilter = '', varyOn = true, health = null;
+let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''};
 let view = 'Проект', owner = 'common', kind = 'photos';
-let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
+let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: []}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
 
 const getP = k => k.includes('.') ? preset[k.split('.')[0]][+k.split('.')[1]] : preset[k];
 function setP(k, v) { if (k.includes('.')) { const [a, i] = k.split('.'); preset[a][+i] = v; } else preset[k] = v; queuePreview(); }
@@ -237,7 +237,24 @@ function momentCard(p, m, i) {
     h('div', {class: 'row', style: 'margin-top:6px'},
       h('input', {type: 'number', step: '0.1', value: m.start, title: 'Начало, с', onchange: e => save({start: +e.target.value})}),
       h('input', {type: 'number', step: '0.1', value: m.end, title: 'Конец, с', onchange: e => save({end: +e.target.value})})),
-    m.reason && h('div', {class: 'mute', style: 'margin-top:6px'}, m.reason));
+    m.reason && h('div', {class: 'mute', style: 'margin-top:6px'}, m.reason),
+    insertsRow(p, m, i));
+}
+function insertsRow(p, m, i) {
+  const list = m.inserts || [], refs = [];
+  for (const o of new Set([p.streamer || 'common', 'common'])) for (const k of ['memes', 'emoji', 'sounds', 'photos']) for (const f of ((S.assets[o] || {})[k] || [])) refs.push(`${o}/${k}/${f}`);
+  const put = arr => api(`/api/projects/${p.id}/moments/${i}/inserts`, 'PUT', {inserts: arr}).then(() => refresh(true)).catch(e => alert(e.message));
+  let sel, at;
+  return h('div', {style: 'margin-top:8px;border-top:1px solid var(--line);padding-top:8px'},
+    h('div', {class: 'hooks', style: 'margin:0 0 6px'},
+      h('span', {class: 'mute'}, 'Вставки: ' + (list.length || 'нет')),
+      h('button', {class: 'btn small', title: 'Мем или эмодзи и звук на самых громких местах — из материалов', onclick: () => api(`/api/projects/${p.id}/moments/${i}/auto_inserts`, 'POST').then(() => refresh(true)).catch(e => alert(e.message))}, 'Авто'),
+      list.length ? h('button', {class: 'btn small', onclick: () => put([])}, 'Убрать все') : null),
+    list.map((x, n) => h('div', {class: 'kv'}, h('span', {}, `${x.at} с · ${x.file.split('/').slice(1).join('/')}`), h('button', {class: 'btn small', onclick: () => put(list.filter((_, k) => k !== n))}, '×'))),
+    refs.length ? h('div', {class: 'row'},
+      sel = h('select', {}, refs.map(r => h('option', {value: r}, r.split('/').slice(1).join('/')))),
+      at = h('input', {type: 'number', step: 0.1, min: 0, value: 1, title: 'Секунда от начала ролика', style: 'flex:0 0 70px'}),
+      h('button', {class: 'btn small', style: 'flex:none', onclick: () => put([...list, {file: sel.value, at: +at.value, duration: sel.value.includes('/sounds/') ? 2 : 1.5, place: 'center', scale: sel.value.includes('/emoji/') ? 0.3 : 0.5}])}, '+')) : null);
 }
 
 function updateRenderBtn() { const b = $('#renderBtn'); if (b) { b.textContent = picked.size ? `Смонтировать выбранные (${picked.size})` : 'Смонтировать все'; } }
@@ -246,6 +263,7 @@ function renderAssets() {
   const owners = Object.keys(S.assets); if (!owners.includes(owner)) owners.push(owner);
   const files = (S.assets[owner] || {})[kind] || [];
   const isImg = n => /\.(png|jpe?g|webp|gif)$/i.test(n);
+  let linkIn;
   $('#main').replaceChildren(
     h('div', {}, h('h1', {}, 'Материалы'), h('div', {class: 'mute'}, 'Свои файлы: общие и отдельно под каждого стримера. Фото идут в топы, шрифты — в титры топов.')),
     h('div', {class: 'card'},
@@ -256,6 +274,10 @@ function renderAssets() {
       h('div', {class: 'field'}, h('label', {}, 'Загрузить файлы (можно несколько)'), h('input', {type: 'file', multiple: true, onchange: async e => {
         for (const f of e.target.files) await fetch(`/api/assets/${encodeURIComponent(owner)}/${kind}?name=` + encodeURIComponent(f.name), {method: 'PUT', body: f});
         await refresh(true); }})),
+      h('div', {class: 'field'}, h('label', {}, 'Или скачать по ссылке (YouTube, TikTok и др.) в этот раздел'), h('div', {class: 'row'},
+        linkIn = h('input', {type: 'text', placeholder: 'https://…'}),
+        h('button', {class: 'btn', style: 'flex:none', onclick: async () => { try { await api(`/api/assets/${encodeURIComponent(owner)}/${kind}/fetch`, 'POST', {url: linkIn.value}); linkIn.value = ''; refresh(true); } catch (e) { alert(e.message); } }}, 'Скачать'))),
+      S.fetching.length ? h('div', {class: 'mute', style: 'margin-bottom:10px'}, 'Скачивается: ' + S.fetching.join('; ')) : null,
       files.length ? h('div', {class: 'assets'}, files.map(n => h('div', {class: 'asset'},
         isImg(n) && h('img', {src: `/assets/${owner}/${kind}/${encodeURIComponent(n)}`, alt: ''}), n,
         h('button', {class: 'btn small', style: 'display:block;margin-top:6px', onclick: async () => { if (confirm('Удалить файл ' + n + '?')) { await api(`/api/assets/${owner}/${kind}/${encodeURIComponent(n)}`, 'DELETE'); refresh(true); } }}, 'Удалить')))) : h('div', {class: 'mute'}, 'Здесь пока пусто.')));
@@ -304,7 +326,8 @@ function streamerCard(st) {
           h('div', {class: 'field'}, h('label', {}, 'Оценка от'), h('input', {type: 'number', min: 0, max: 100, value: st.min_score, onchange: e => patch({min_score: +e.target.value})}))),
         h('label', {class: 'check'}, toggle('skip_profanity', ''), 'Пропускать моменты с матом')),
       h('div', {class: 'stage'}, h('h3', {}, '3 · Публикация'), h('div', {style: 'margin-bottom:6px'}, h('span', {class: 'pill'}, 'не подключена')),
-        h('div', {class: 'mute'}, 'Автовыкладка в TikTok, YouTube и Instagram по расписанию — следующий этап. Пока ролики забираются вручную из проекта.')),
+        h('div', {class: 'mute'}, 'Автовыкладка по расписанию — следующий этап. Пока ролики забираются вручную из проекта.'),
+        kv('аккаунтов привязано', Object.values(S.accounts).filter(a => !a.streamer || a.streamer === st.id).length)),
       h('div', {class: 'stage'}, h('h3', {}, '4 · Очистка', toggle('delete_chunks', 'Удалять записанный кусок эфира сразу после монтажа')),
         h('div', {style: 'margin-bottom:6px'}, h('span', {class: 'pill ' + (st.delete_chunks ? 'good' : '')}, st.delete_chunks ? 'удаляет куски после монтажа' : 'выключена')),
         kv('свободно на диске', S.disk_free_gb + ' ГБ'), h('div', {class: 'mute', style: 'margin-top:6px'}, 'Удаляются только исходные записи эфира. Готовые ролики не трогаются.'))),
@@ -330,6 +353,52 @@ function renderStreamers() {
     ...(list.length ? list.map(streamerCard) : [h('div', {class: 'empty'}, 'Стримеров пока нет.')]));
 }
 
+const num = n => n >= 1e6 ? (n / 1e6).toFixed(1) + ' млн' : n >= 1e3 ? Math.round(n / 1e3) + ' тыс' : String(n);
+async function loadTrends() { try { trendRows = await (await api('/api/trends?window=' + trendWin)).json(); } catch (e) { trendRows = []; } if (view === 'Тренды') renderTrends(); }
+function renderTrends() {
+  if (trendRows === null) loadTrends();
+  const watch = Object.values(S.watch); let kindIn, valIn;
+  $('#main').replaceChildren(
+    h('div', {}, h('h1', {}, 'Тренды'), h('div', {class: 'mute'}, 'Добавьте каналы игровых блогеров и темы — панель раз в 3 часа собирает просмотры и показывает, что растёт быстрее всего.')),
+    h('div', {class: 'card'}, h('h2', {}, 'Источники'),
+      h('div', {class: 'row', style: 'margin-bottom:10px'},
+        kindIn = h('select', {style: 'flex:0 0 170px', onchange: e => { trendForm.kind = e.target.value; }}, h('option', {value: 'channel', selected: trendForm.kind === 'channel'}, 'Канал YouTube'), h('option', {value: 'topic', selected: trendForm.kind === 'topic'}, 'Тема (поиск)')),
+        valIn = h('input', {type: 'text', value: trendForm.value, oninput: e => { trendForm.value = e.target.value; }, placeholder: 'Ссылка на канал или @ник; для темы — запрос, например: GTA 6 shorts'}),
+        h('button', {class: 'btn primary', style: 'flex:none', onclick: async () => { try { await api('/api/watch', 'POST', {kind: kindIn.value, value: valIn.value}); trendForm.value = ''; refresh(true); } catch (e) { alert(e.message); } }}, 'Добавить'),
+        h('button', {class: 'btn', style: 'flex:none', onclick: async () => { await api('/api/trends/refresh', 'POST'); alert('Обновление запущено — данные появятся через минуту-две.'); }}, 'Обновить сейчас')),
+      watch.length ? watch.map(w => h('div', {class: 'kv'}, h('span', {}, (w.kind === 'topic' ? 'тема · ' : 'канал · ') + w.name + (w.error ? ' — ошибка: ' + w.error : w.updated ? ` — роликов ${w.count || 0}, обновлено ${ago(w.updated)}` : ' — ждёт первого сбора')),
+        h('button', {class: 'btn small', onclick: async () => { await api('/api/watch/' + w.id, 'DELETE'); trendRows = null; refresh(true); }}, '×'))) : h('div', {class: 'mute'}, 'Источников пока нет.')),
+    h('div', {class: 'card'},
+      h('div', {class: 'tabs'}, [['24h', 'За 24 часа'], ['48h', 'За 48 часов'], ['30d', 'За месяц']].map(([k, n]) => h('button', {class: 'tab' + (k === trendWin ? ' active' : ''), onclick: () => { trendWin = k; trendRows = null; renderTrends(); }}, n))),
+      !trendRows ? h('div', {class: 'mute'}, 'Загружаю…') : !trendRows.length ? h('div', {class: 'mute'}, 'За это окно данных пока нет. Рост считается по двум сборам — он появится после второго обновления.') :
+        trendRows.map((r, n) => h('div', {class: 'kv', style: 'padding:6px 0;border-bottom:1px solid var(--line);font-size:13px'},
+          h('span', {style: 'color:var(--text)'}, `${n + 1}. `, h('a', {href: r.url, target: '_blank', rel: 'noopener', style: 'color:inherit'}, r.title || r.id), h('span', {class: 'mute'}, ` · ${r.channel} · ${num(r.views)} просм. · ${r.age_hours < 48 ? r.age_hours + ' ч' : Math.round(r.age_hours / 24) + ' дн'} · ${num(r.per_hour)}/ч` + (r.growth ? ` · рост +${num(r.growth)}` : '') + (r.date_known ? '' : ' · дата примерная'))),
+          h('span', {style: 'flex:none'},
+            h('button', {class: 'btn small', title: 'Скачать и найти моменты', onclick: async () => { const x = await (await api('/api/projects', 'POST', {source: r.url, picker: 'auto', count: 5, min: 15, max: 60})).json(); cur = x.id; view = 'Проект'; refresh(true); }}, 'В работу'), ' ',
+            h('button', {class: 'btn small', title: 'Разобрать стиль этого ролика', onclick: async () => { await api('/api/references', 'POST', {source: r.url, name: (r.title || r.id).slice(0, 30)}); view = 'Примеры'; refresh(true); }}, 'Как пример'))))));
+}
+function renderAccounts() {
+  const list = Object.values(S.accounts).sort((a, b) => a.platform.localeCompare(b.platform));
+  const names = {youtube: 'YouTube Shorts', tiktok: 'TikTok', instagram: 'Instagram Reels'};
+  let pl, handle, email, device, streamer, notes;
+  $('#main').replaceChildren(
+    h('div', {}, h('h1', {}, 'Аккаунты'), h('div', {class: 'mute'}, 'Учёт: какой аккаунт на какой почте, на каком устройстве и для какого стримера. Пароли сюда не вводятся и не хранятся.')),
+    h('div', {class: 'card'}, h('h2', {}, 'Добавить аккаунт'),
+      h('div', {class: 'row'},
+        pl = h('select', {}, Object.entries(names).map(([k, n]) => h('option', {value: k}, n))),
+        handle = h('input', {type: 'text', placeholder: 'Имя аккаунта, например @zloy.clips'}),
+        email = h('input', {type: 'text', placeholder: 'Почта, к которой привязан'})),
+      h('div', {class: 'row', style: 'margin-top:8px'},
+        device = h('input', {type: 'text', placeholder: 'Устройство: телефон или браузер, где он открыт'}),
+        streamer = h('select', {}, h('option', {value: ''}, 'Для всех стримеров'), Object.values(S.streamers).map(x => h('option', {value: x.id}, x.name))),
+        notes = h('input', {type: 'text', placeholder: 'Заметка'}),
+        h('button', {class: 'btn primary', style: 'flex:none', onclick: async () => { try { await api('/api/accounts', 'POST', {platform: pl.value, handle: handle.value, email: email.value, device: device.value, streamer: streamer.value, notes: notes.value}); refresh(true); } catch (e) { alert(e.message); } }}, 'Сохранить'))),
+    h('div', {class: 'card'}, list.length ? list.map(a => h('div', {class: 'kv', style: 'padding:7px 0;border-bottom:1px solid var(--line);font-size:13px'},
+      h('span', {style: 'color:var(--text)'}, h('span', {class: 'pill'}, names[a.platform]), ' ', h('b', {}, a.handle), h('span', {class: 'mute'}, [a.email && ' · ' + a.email, a.device && ' · ' + a.device, a.streamer && ' · стример: ' + ((S.streamers[a.streamer] || {}).name || a.streamer), a.notes && ' · ' + a.notes].filter(Boolean).join(''))),
+      h('button', {class: 'btn small', onclick: async () => { if (confirm('Удалить запись об аккаунте ' + a.handle + '?')) { await api('/api/accounts/' + a.id, 'DELETE'); refresh(true); } }}, '×'))) : h('div', {class: 'mute'}, 'Аккаунтов пока нет.')),
+    h('div', {class: 'card'}, h('h2', {}, 'Автопостинг'), h('div', {class: 'mute'}, 'Пока не подключён. Для него нужен сервис-посредник (например Blotato) или официальные доступы YouTube и TikTok — вход в аккаунты выполняется на их стороне, а не паролем в этой панели.')));
+}
+
 async function renderHealth() {
   if (!health) { $('#main').replaceChildren(h('div', {class: 'empty'}, 'Проверяю…')); health = await (await api('/api/health')).json(); if (view !== 'Настройка') return; }
   $('#main').replaceChildren(
@@ -343,6 +412,8 @@ async function renderHealth() {
 function renderMain() {
   if (view === 'Настройка') return renderHealth();
   if (view === 'Стримеры') return renderStreamers();
+  if (view === 'Тренды') return renderTrends();
+  if (view === 'Аккаунты') return renderAccounts();
   if (view === 'Материалы') return renderAssets();
   if (view === 'Примеры') return renderRefs();
   const main = $('#main'), p = S.projects[cur];
@@ -403,7 +474,8 @@ function renderMain() {
   updateRenderBtn(); queuePreview();
 }
 
-function renderNav() { $('#nav').replaceChildren(...['Стримеры', 'Проект', 'Материалы', 'Примеры', 'Настройка'].map(v => h('button', {class: 'tab' + (v === view ? ' active' : ''), onclick: () => { view = v; renderAll(); }}, v)));
+function renderNav() { $('#nav').replaceChildren(...['Стримеры', 'Проект', 'Тренды', 'Материалы', 'Примеры', 'Аккаунты', 'Настройка'].map(v => h('button', {class: 'tab' + (v === view ? ' active' : ''), onclick: () => { view = v; renderAll(); }}, v)));
+  $('.logo h1').textContent = 'Clipper' + (S.profile ? ' · ' + S.profile : '');
   $('#owners').replaceChildren(...Object.keys(S.assets).filter(o => o !== 'common').map(o => h('option', {value: o}))); }
 function renderAll() { renderNav(); renderProjects(); renderMain(); }
 let lastSig = '';
@@ -412,7 +484,7 @@ async function refresh(force) {
   if (!preset) preset = structuredClone(S.presets[0] || S.defaults);
   if (!$('#picker').options.length) $('#picker').append(...['auto', ...S.pickers].map(k => h('option', {value: k}, PICKERS[k] || k)));
   if (!cur || !S.projects[cur]) cur = Object.values(S.projects).sort((a, b) => b.created - a.created)[0]?.id || null;
-  const sig = JSON.stringify([S.projects, S.presets.map(p => p.name), cur, S.assets, S.references, Object.values(S.streamers).map(x => ({...x, last_check: 0}))]);
+  const sig = JSON.stringify([S.projects, S.presets.map(p => p.name), cur, S.assets, S.references, S.watch, S.accounts, S.fetching, Object.values(S.streamers).map(x => ({...x, last_check: 0}))]);
   if (force || sig !== lastSig && !document.activeElement.matches('main input, main select')) { lastSig = sig; renderAll(); }
 }
 $('#add').onclick = async () => {

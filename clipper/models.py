@@ -55,6 +55,16 @@ def _spread_words(seg: Segment) -> list[Word]:
     return out
 
 
+class Insert(BaseModel):
+    """Вставка поверх ролика: мем-видео, картинка, эмодзи или звук."""
+
+    file: str  # материал вида «владелец/тип/имя» или полный путь
+    at: float = 0.0  # секунда от начала ролика
+    duration: float = 1.5
+    place: str = "center"  # full, top, center, bottom
+    scale: float = 0.45  # ширина относительно кадра (кроме full)
+
+
 class Moment(BaseModel):
     start: float = Field(description="Начало момента, секунды от начала видео")
     end: float = Field(description="Конец момента, секунды от начала видео")
@@ -66,6 +76,7 @@ class Moment(BaseModel):
     profanity: bool = Field(default=False, description="Есть мат")
     category: str = Field(default="", description="Тип момента: смешное, мем, фейл, эмоция, конфликт, скилл, цитата, история")
     hooks: list[str] = Field(default_factory=list, description="2-3 альтернативные надписи-хука")
+    inserts: list[Insert] = Field(default_factory=list)
 
     @property
     def duration(self) -> float:

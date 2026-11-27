@@ -38,3 +38,20 @@ def test_parse_json_reply_tolerates_wrapping_text():
     from clipper.moments import _parse_json_reply
     text = 'Вот моменты:\n```json\n{"moments": [{"start": 1, "end": 31, "title": "x"}]}\n```'
     assert _parse_json_reply(text)[0].end == 31
+
+
+def test_trends_ranking_uses_growth_and_window():
+    from clipper.trends import merge, parse_entries, ranking
+    now = 1_800_000_000.0
+    data = {"channel": "Chan", "entries": [
+        {"id": "a", "title": "new hit", "view_count": 50000, "timestamp": now - 3600 * 5},
+        {"id": "b", "title": "old", "view_count": 900000, "timestamp": now - 86400 * 20},
+        {"id": "c", "title": "small", "view_count": 100, "timestamp": now - 3600}]}
+    videos: dict = {}
+    merge(videos, parse_entries(data), "chan", now - 7200)
+    data["entries"][1]["view_count"] = 990000
+    merge(videos, parse_entries(data), "chan", now)
+    day = ranking(videos, "24h", now)
+    assert day[0]["id"] == "b" and day[0]["growth"] == 90000  # старый ролик, но резко растёт
+    assert {r["id"] for r in day} == {"a", "b", "c"}
+    assert [r["id"] for r in ranking(videos, "30d", now)][0] == "b"

@@ -95,7 +95,7 @@ def find_themes(sources: list[tuple[str, str, Transcript]], count: int = 5) -> l
 
 
 def join_faded(parts: list[Path], lengths: list[float], out: Path, fade: float = 0.45) -> None:
-    """Склейка с мягким затемнением между кусками, плавным входом и выходом."""
+    """Склейка с мягким затемнением между кусками и плавным выходом."""
     from .top import has_audio
     cmd, fc, offset, v, a = ["ffmpeg", "-y", "-v", "error"], [], 0.0, "0:v", "0:a"
     sound = all(has_audio(p) for p in parts)
@@ -109,7 +109,8 @@ def join_faded(parts: list[Path], lengths: list[float], out: Path, fade: float =
             fc.append(f"[{a}][{i}:a]acrossfade=d={fade}[a{i}]")
             a = f"a{i}"
     end = sum(lengths) - fade * (len(parts) - 1) - 0.6
-    fc.append(f"[{v}]fade=in:st=0:d=0.35,fade=out:st={end:.2f}:d=0.6,format=yuv420p[vo]")
+    # без затемнения в начале: первый кадр идёт на обложку ролика
+    fc.append(f"[{v}]fade=out:st={end:.2f}:d=0.6,format=yuv420p[vo]")
     cmd += ["-filter_complex"]
     if sound:
         fc.append(f"[{a}]afade=in:d=0.3,afade=out:st={end:.2f}:d=0.6[ao]")

@@ -77,6 +77,7 @@ class Moment(BaseModel):
     profanity: bool = Field(default=False, description="Есть мат")
     category: str = Field(default="", description="Тип момента: смешное, мем, фейл, эмоция, конфликт, скилл, цитата, история")
     hooks: list[str] = Field(default_factory=list, description="2-3 альтернативные надписи-хука")
+    risk: str = Field(default="", description="Если момент задевает темы, за которые могут не заплатить, — какие именно; иначе пусто")
     inserts: list[Insert] = Field(default_factory=list)
     chat_user: str = ""  # ник автора сообщения из чата (для раскладки «чат + реакция»)
     chat_text: str = ""

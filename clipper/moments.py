@@ -42,7 +42,8 @@ def _format_transcript(tr: Transcript) -> str:
 def _prompt(tr: Transcript, count: int, min_len: float, max_len: float, focus: str = "", avoid: str = "") -> str:
     want = f"Особенно ищи моменты такого типа: {focus}.\n" if focus.strip() else ""
     if avoid.strip():
-        want += f"Не бери моменты, где есть: {avoid}. За такие ролики не платят.\n"
+        want += (f"Темы, за которые автору могут не заплатить: {avoid}. Такие моменты НЕ исключай и оценку не занижай — "
+                 f"просто впиши в поле risk, какую тему задевает момент. Если не задевает — оставь risk пустым.\n")
     return want + (
         f"Нужно до {count} моментов длиной от {min_len:.0f} до {max_len:.0f} секунд.\n"
         f"Длительность видео: {tr.duration:.0f} с.\n\nРасшифровка:\n{_format_transcript(tr)}"
@@ -52,7 +53,7 @@ def _prompt(tr: Transcript, count: int, min_len: float, max_len: float, focus: s
 JSON_RULE = (
     "\n\nОтветь только JSON-объектом без пояснений и без markdown, вида: "
     '{"moments": [{"start": 0.0, "end": 0.0, "title": "", "caption": "", '
-    '"hashtags": [], "score": 0, "reason": "", "profanity": false, "category": "", "hooks": []}]}'
+    '"hashtags": [], "score": 0, "reason": "", "profanity": false, "category": "", "risk": "", "hooks": []}]}'
 )
 
 

@@ -189,6 +189,27 @@ dialog[open]::backdrop{animation:fade .16s var(--ease)}
 @keyframes toast{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
 @keyframes fade{from{opacity:0}to{opacity:1}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+/* --- оформление 4: проход по правилам unslop — решения приняты один раз, здесь --- */
+:root{--accent:#a9dc5a;--accent-hi:#bde67c}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+h2{text-transform:none;letter-spacing:0;font-size:13px;font-weight:600;color:var(--text2)}
+nav .grp{text-transform:none;letter-spacing:0;font-size:12px;font-weight:600;color:var(--faint)}
+nav button,nav button.active{border-left:0;border-radius:8px;padding-left:12px}
+nav button.active{background:var(--panel3)}
+.toast,.toast.bad{border-left:1px solid var(--line2)}
+.toast.bad{border-color:var(--bad)}
+dialog .card{background:transparent;border:0;padding:0;box-shadow:none}
+.card .stage,.card .asset{background:transparent}
+.score,.tile b,.badge2,.kv span:last-child,.mrow .mute{font-variant-numeric:tabular-nums}
+.score{display:inline-grid;place-items:center;min-width:34px;height:22px;padding:0 6px;border-radius:6px;background:var(--panel3);color:var(--text);font-weight:600;font-size:12px}
+.mrow .score{min-width:34px}
+.clip .badge2{border-color:var(--line2);color:var(--text);background:rgba(8,9,11,.78)}
+.step.done i{background:var(--panel3);color:var(--text2)}
+.pill.good{color:var(--good);border-color:var(--line2)}
+.pill.warn{color:var(--warn);border-color:var(--line2)}
+.pill.bad{color:var(--bad);border-color:var(--line2)}
+.btn.small.primary{font-weight:600}
+.section{padding:0}
 </style>
 </head>
 <body>
@@ -392,7 +413,7 @@ function momentCard(p, m, i) {
   return h('div', {class: 'moment' + (i === mom ? ' active' : ''), onclick: e => { if (e.target.closest('input,button')) return; mom = i; renderMain(); }},
     h('div', {class: 'top'},
       h('input', {type: 'checkbox', checked: picked.has(i), title: 'Выбрать для монтажа', onchange: e => { e.target.checked ? picked.add(i) : picked.delete(i); updateRenderBtn(); }}),
-      h('span', {class: 'score'}, '★' + m.score),
+      h('span', {class: 'score'}, '' + m.score),
       h('span', {class: 'mute'}, `${(m.end - m.start).toFixed(0)} с · склеек ${cuts}`),
       m.category && h('span', {class: 'pill'}, m.category),
       m.profanity && h('span', {class: 'pill warn'}, 'мат')),
@@ -513,8 +534,9 @@ function rulesBlock(st) {
     h('div', {class: 'row'}, text('rule_link', 'Обязательная ссылка в подписи', 'например: twitch: ZLOYn'),
       h('div', {class: 'field', style: 'flex:0 0 190px'}, h('label', {}, 'Срок приёма, дней'), h('input', {type: 'number', min: 0, value: st.rule_days || 0, onchange: e => patch({rule_days: +e.target.value})}))),
     text('rule_tiers', 'Пороги выплат — просмотры:нарезка $:мем-видео $', '100000:25:7.5, 500000:115:20'),
-    text('rule_avoid', 'За что не платят (эти темы не попадут в моменты)', 'политика, запрещённые вещества…'),
-    flag('rule_no_split', 'Запрещён сплит: лицо стримера + отвлекающее видео'), flag('rule_no_ads', 'Запрещены баннеры и реклама в ролике'));
+    text('rule_avoid', 'За что могут не заплатить (такие моменты помечаются, но не отбрасываются)', 'политика, запрещённые вещества…'),
+    flag('rule_no_split', 'Предупреждать про сплит: лицо стримера + отвлекающее видео'), flag('rule_no_ads', 'Предупреждать про баннеры и рекламу в ролике'),
+    h('div', {class: 'mute'}, 'Правила — подсказки: панель делает ролик так, как вы просили, и только предупреждает. Сама она дописывает лишь обязательную ссылку в подпись.'));
 }
 function streamerCard(st) {
   const projects = Object.values(S.projects).filter(p => p.streamer === st.id);
@@ -757,20 +779,21 @@ function renderMain() {
     h('div', {}, h('h1', {}, p.title), h('div', {class: 'mute'}, p.duration ? `${Math.round(p.duration / 60)} мин · ${p.width}×${p.height}` : p.source, p.picker ? ` · моменты выбрал: ${PICKERS[p.picker] || p.picker}` : '')),
     h('div', {style: 'flex:none'}, h('button', {class: 'btn', onclick: async () => { if (confirm('Удалить проект из списка? Файлы роликов останутся на диске.')) { await api('/api/projects/' + p.id, 'DELETE'); cur = null; refresh(); } }}, 'Удалить проект')));
   const stepNow = busy && p.status !== 'render' ? 0 : !p.moments.length ? 0 : !(p.clips || []).length ? (p.status === 'render' ? 2 : 1) : Object.values(S.queue).some(q => q.project === p.id) ? 4 : 3;
-  const steps = h('div', {class: 'steps'}, ['Анализ', 'Моменты и оформление', 'Монтаж', 'Готовые ролики', 'Публикация'].map((t, n) => h('div', {class: 'step' + (n < stepNow ? ' done' : n === stepNow ? ' now' : '')}, h('i', {}, n < stepNow ? '✓' : n + 1), t)));
+  const steps = h('div', {class: 'steps'}, ['Анализ', 'Моменты и оформление', 'Монтаж', 'Готовые ролики', 'Публикация'].map((t, n) => h('div', {class: 'step' + (n < stepNow ? ' done' : n === stepNow ? ' now' : '')}, h('i', {}, n + 1), t)));
   const status = h('div', {class: 'status' + (p.status === 'error' ? ' error' : '')}, busy ? h('span', {class: 'spin'}) : null, h('span', {}, (STATUS[p.status] || p.status) + ': ' + (p.message || '') + (p.warning ? ' · ' + p.warning : '')));
 
   const cats = [...new Set(p.moments.map(m => m.category).filter(Boolean))];
   if (!cats.includes(catFilter)) catFilter = '';
   const row = (m, i) => h('div', {class: 'mrow'},
     h('input', {type: 'checkbox', checked: picked.has(i), title: 'Выбрать для монтажа', 'aria-label': 'Выбрать момент', onchange: e => { e.target.checked ? picked.add(i) : picked.delete(i); updateRenderBtn(); }}),
-    h('span', {class: 'score'}, '★' + m.score),
+    h('span', {class: 'score'}, '' + m.score),
     h('input', {type: 'text', value: m.title, placeholder: 'Надпись-хук', 'aria-label': 'Надпись-хук', onchange: e => api(`/api/projects/${p.id}/moments/${i}`, 'PATCH', {title: e.target.value}).then(() => { m.title = e.target.value; })}),
     m.category && h('span', {class: 'pill'}, m.category), m.profanity && h('span', {class: 'pill warn'}, 'мат'),
+    m.risk && h('span', {class: 'pill warn', title: 'По правилам стримера за это могут не заплатить: ' + m.risk}, 'риск по правилам'),
     (m.inserts || []).length ? h('span', {class: 'pill'}, 'вставок ' + m.inserts.length) : null,
     h('span', {class: 'mute', style: 'white-space:nowrap'}, `${(m.end - m.start).toFixed(0)} с`),
     h('button', {class: 'btn small', title: 'Границы, варианты хука, сообщение чата, картинка, вставки', onclick: () => { mom = i; openModal('moment'); }}, 'Изменить'));
-  const moments = h('div', {class: 'card'},
+  const moments = h('div', {class: 'section'},
     h('div', {class: 'row', style: 'margin-bottom:10px'}, h('h2', {style: 'margin:0'}, `Моменты (${p.moments.length})`),
       h('div', {class: 'actions', style: 'flex:none'},
         h('button', {class: 'btn small', disabled: !p.video, onclick: async () => { const s = +prompt('Начало момента, секунды', '0'); const e = +prompt('Конец момента, секунды', String(s + 30)); if (e > s) { await api(`/api/projects/${p.id}/moments`, 'POST', {start: s, end: e, title: ''}); refresh(true); } }}, '+ Свой момент'))),
@@ -813,7 +836,7 @@ function renderMain() {
       (p.clips || []).length > 1 ? h('a', {class: 'btn small', style: 'flex:none;text-decoration:none', href: `/api/projects/${p.id}/zip`}, 'Скачать все архивом') : null),
     (p.clips || []).length ? h('div', {class: 'clips'}, p.clips.map(c => h('div', {class: 'clip'},
       h('video', {src: clipUrl(c), controls: true, preload: 'metadata'}),
-      c.score ? h('span', {class: 'badge2'}, '★' + c.score) : null,
+      c.score ? h('span', {class: 'badge2'}, '' + c.score) : null,
       h('div', {class: 'body'},
         h('b', {title: c.title}, c.title || 'Без названия'),
         h('div', {class: 'mute'}, c.preset, c.profanity ? ' · мат' : ''),

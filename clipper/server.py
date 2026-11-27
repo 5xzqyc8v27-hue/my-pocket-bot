@@ -230,13 +230,16 @@ def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False,
                 m.title = common_title.strip()
             preset = vary(chosen, seed=int(time.time() * 1000) + n) if (varied or chosen is not base) else chosen
             preset = apply_face(preset, p.get("face"))
-            rule = rules_of(p)
-            if rule.get("rule_no_split") and preset.layout == "split":  # правила стримера запрещают отвлекающее видео
-                preset = preset.model_copy(update={"layout": "reaction"})
-                p["warning"] = "Сплит с залипалкой запрещён правилами этого стримера — смонтировано в «Вебка + игра»"
+            rule = rules_of(p)  # правила — подсказка: монтируем как просили, но предупреждаем
+            notes = []
+            if rule.get("rule_no_split") and preset.layout == "split":
+                notes.append("сплит с отвлекающим видео по правилам этого стримера могут не принять")
             if rule.get("rule_no_ads") and preset.banner:
-                preset = preset.model_copy(update={"banner": None})
-                p["warning"] = "Баннер убран: правила этого стримера запрещают рекламу в роликах"
+                notes.append("баннер в ролике по правилам этого стримера может считаться рекламой")
+            if m.risk:
+                notes.append(f"момент задевает тему, за которую могут не заплатить: {m.risk}")
+            if notes:
+                p["warning"] = "Обратите внимание: " + "; ".join(dict.fromkeys(notes))
             set_status(p, "render", f"Монтирую {n} из {len(indexes)}: {m.title or 'без названия'}")
             name = f"{int(m.start):05d}_{slug(m.title)}_{preset.name}_{uuid.uuid4().hex[:4]}.mp4"
             render_clip(video, m, preset, out_dir / name, tr, filler_of(p, preset, m), resolve=resolve_asset)

@@ -10,6 +10,8 @@ import traceback
 from pathlib import Path
 from typing import Callable
 
+from .chat import ChatLogger
+
 URLS = {"twitch": "https://www.twitch.tv/{}", "kick": "https://kick.com/{}"}
 CHECK_EVERY = 60  # секунд между проверками «в эфире ли»
 
@@ -47,6 +49,10 @@ class Recorder:
         else:
             seg += ["-strftime", "1", str(out_dir / f"{name}_%Y%m%d_%H%M%S.ts")]
         self.source = None
+        self.chat = None
+        if platform == "twitch":  # чат пишется рядом с эфиром
+            self.chat = ChatLogger(channel, out_dir / "chat.jsonl")
+            self.chat.start()
         if platform == "file":  # готовая запись эфира — режем её на куски так же, как живой поток
             self.ffmpeg = subprocess.Popen(["ffmpeg", "-v", "error", "-i", str(Path(channel).expanduser()), *seg])
         else:
@@ -60,6 +66,8 @@ class Recorder:
         return self.ffmpeg.poll() is None
 
     def stop(self) -> None:
+        if self.chat:
+            self.chat.stop()
         for proc in (self.source, self.ffmpeg):
             if proc and proc.poll() is None:
                 proc.terminate()
@@ -105,6 +113,7 @@ class StreamManager:
                 self._update(s, recording=False, live=False, message="Запись выключена")
             return
         if rec and not rec.running():
+            rec.stop()
             self.recorders.pop(sid)
             rec = None
             done = s["platform"] == "file"

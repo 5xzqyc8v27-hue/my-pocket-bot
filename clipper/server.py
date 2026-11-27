@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from .analysis import detect_scenes, uniqueness
 from .capcut import default_drafts_dir, export_draft
+from .chat import find_read_messages, load_chat
 from .media import fetch, probe
 from . import trends
 from .models import Insert, Moment, Preset, Transcript
@@ -122,7 +123,14 @@ def transcript_of(p: dict) -> Transcript | None:
     return Transcript.load(path) if path.exists() else None
 
 
-def filler_of(p: dict) -> Path | None:
+def filler_of(p: dict, preset: Preset | None = None) -> Path | None:
+    """Залипалка для сплита; для раскладки «чат» — случайное фото стримера из материалов."""
+    if preset and preset.layout == "chat":
+        for owner in (p.get("streamer") or "common", "common"):
+            photos = sorted((ASSETS / owner / "photos").glob("*")) if (ASSETS / owner / "photos").is_dir() else []
+            if photos:
+                return random.choice(photos)
+        return None
     f = p.get("filler")
     return Path(f) if f and Path(f).exists() else None
 
@@ -153,8 +161,12 @@ def analyze_job(pid: str, opts: dict) -> None:
         set_status(p, "moments", "Ищу сильные моменты…")
         moments, used = pick(video, tr, opts["picker"], opts["count"], opts["min"], opts["max"],
                              log=lambda msg: set_status(p, "moments", msg), focus=opts.get("focus", ""))
+        chat = load_chat(video.with_suffix(".chat.jsonl"))
+        if chat and tr and tr.segments:  # моменты, где стример прочитал сообщение из чата и ответил
+            moments = [*moments, *find_read_messages(tr, chat)]
         with lock:
             p["picker"] = used
+            p["chat_messages"] = len(chat)
             p["moments"] = [m.model_dump() for m in sorted(moments, key=lambda m: -m.score)]
         set_status(p, "ready", f"Найдено моментов: {len(moments)}")
     except Exception as exc:
@@ -172,7 +184,7 @@ def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False)
             preset = vary(base, seed=int(time.time() * 1000) + i) if varied else base
             set_status(p, "render", f"Монтирую {n} из {len(indexes)}: {m.title or 'без названия'}")
             name = f"{int(m.start):05d}_{slug(m.title)}_{preset.name}_{uuid.uuid4().hex[:4]}.mp4"
-            render_clip(video, m, preset, out_dir / name, tr, filler_of(p), resolve=resolve_asset)
+            render_clip(video, m, preset, out_dir / name, tr, filler_of(p, preset), resolve=resolve_asset)
             with lock:
                 p.setdefault("clips", []).insert(0, {
                     "file": name, "title": m.title, "caption": m.caption, "hashtags": m.hashtags,
@@ -201,6 +213,8 @@ class NewProject(BaseModel):
 
 
 class MomentPatch(BaseModel):
+    chat_user: str | None = None
+    chat_text: str | None = None
     title: str | None = None
     start: float | None = None
     end: float | None = None
@@ -336,7 +350,7 @@ def preview(req: PreviewReq):
     m = Moment.model_validate(p["moments"][req.moment])
     out = DATA / "preview" / f"{req.project}.jpg"
     try:
-        render_frame(Path(p["video"]), m, req.preset, out, transcript_of(p), filler_of(p), req.at)
+        render_frame(Path(p["video"]), m, req.preset, out, transcript_of(p), filler_of(p, req.preset), req.at)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)[-400:])
     return FileResponse(out, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
@@ -396,6 +410,13 @@ class StreamerReq(BaseModel):
 
 def process_chunk(st: dict, chunk: Path) -> int:
     """Один записанный кусок эфира: найти моменты и смонтировать лучшие."""
+    stamp = re.search(r"_(\d{8}_\d{6})\.ts$", chunk.name)
+    log = chunk.parent / "chat.jsonl"
+    if stamp and log.exists():  # вырезаем из общего лога чата сообщения этого куска
+        begin = time.mktime(time.strptime(stamp.group(1), "%Y%m%d_%H%M%S"))
+        part = load_chat(log, begin, probe(chunk)["duration"])
+        chunk.with_suffix(".chat.jsonl").write_text(
+            "\n".join(json.dumps(m, ensure_ascii=False) for m in part), encoding="utf-8")
     pid = uuid.uuid4().hex[:8]
     with lock:
         state["projects"][pid] = {"id": pid, "source": str(chunk), "title": chunk.stem, "status": "queued",
@@ -407,7 +428,8 @@ def process_chunk(st: dict, chunk: Path) -> int:
     if p["status"] == "error":
         raise RuntimeError(p["message"])
     good = [i for i, m in enumerate(p["moments"])
-            if m["score"] >= st["min_score"] and not (st["skip_profanity"] and m["profanity"])]
+            if m["score"] >= st["min_score"] and not (st["skip_profanity"] and m["profanity"])
+            and m.get("category") != "чат"]  # ролики по чату ждут просмотра человеком
     if not good:
         set_status(p, "ready", "Сильных моментов в этом куске нет")
         return 0

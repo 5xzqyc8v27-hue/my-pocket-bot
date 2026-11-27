@@ -130,7 +130,7 @@ const PICKERS = {auto: 'Авто (лучший доступный)', claude: 'Cl
 const STATUS = {queued: 'в очереди', download: 'скачивание', transcribe: 'расшифровка', scenes: 'сцены', moments: 'поиск моментов', render: 'монтаж', ready: 'готов', error: 'ошибка'};
 const TABS = {
   'Раскладка': [
-    ['layout', 'Раскладка', 'select', {center: 'Видео по центру', square: 'Квадрат', split: 'Сплит с залипалкой', reaction: 'Вебка + игра'}],
+    ['layout', 'Раскладка', 'select', {center: 'Видео по центру', square: 'Квадрат', split: 'Сплит с залипалкой', reaction: 'Вебка + игра', chat: 'Чат + реакция'}],
     ['content_zoom', 'Масштаб контента', 'range', [1, 1.6, 0.01]],
     ['background_blur', 'Размытие фона', 'range', [0, 60, 1]],
     ['split_share', 'Доля ролика в сплите', 'range', [0.3, 0.7, 0.01]],
@@ -163,6 +163,7 @@ const TABS = {
   'Уникализация': [
     ['camera', 'Движение камеры', 'select', {none: 'Нет', push: 'Плавный наезд', punch: 'Резкие наезды на громких местах', both: 'Оба'}],
     ['camera_strength', 'Сила наезда', 'range', [0.04, 0.3, 0.01]],
+    ['chat_hide_nick', 'Скрывать ник зрителя в роликах по чату', 'bool'],
     ['mirror', 'Отзеркалить', 'bool'],
     ['speed', 'Скорость', 'range', [0.9, 1.15, 0.01]],
     ['brightness', 'Яркость', 'range', [-0.15, 0.15, 0.01]],
@@ -238,6 +239,9 @@ function momentCard(p, m, i) {
       h('input', {type: 'number', step: '0.1', value: m.start, title: 'Начало, с', onchange: e => save({start: +e.target.value})}),
       h('input', {type: 'number', step: '0.1', value: m.end, title: 'Конец, с', onchange: e => save({end: +e.target.value})})),
     m.reason && h('div', {class: 'mute', style: 'margin-top:6px'}, m.reason),
+    h('div', {class: 'row', style: 'margin-top:6px'},
+      h('input', {type: 'text', value: m.chat_user || '', placeholder: 'Ник из чата', style: 'flex:0 0 110px', onchange: e => save({chat_user: e.target.value})}),
+      h('input', {type: 'text', value: m.chat_text || '', placeholder: 'Сообщение из чата — для раскладки «Чат + реакция»', onchange: e => save({chat_text: e.target.value})})),
     insertsRow(p, m, i));
 }
 function insertsRow(p, m, i) {
@@ -315,7 +319,7 @@ function streamerCard(st) {
     h('div', {class: 'stages'},
       h('div', {class: 'stage'}, h('h3', {}, '1 · Эфир', toggle('enabled', 'Следить за эфиром и записывать')),
         h('div', {style: 'margin-bottom:6px'}, h('span', {class: 'pill ' + (st.recording ? 'good' : '')}, st.recording ? 'пишет эфир' : st.enabled ? 'ждёт эфира' : 'выключен')),
-        kv('состояние', st.message || '—'), kv('в эфире с', st.recording ? ago(st.live_since) : '—'), kv('последний кусок', st.last_chunk || '—'), kv('проверка', ago(st.last_check)),
+        kv('состояние', st.message || '—'), kv('чат', st.platform === 'twitch' ? (st.recording ? 'пишется' : 'пишется вместе с эфиром') : 'не пишется'), kv('в эфире с', st.recording ? ago(st.live_since) : '—'), kv('последний кусок', st.last_chunk || '—'), kv('проверка', ago(st.last_check)),
         h('div', {class: 'field', style: 'margin-top:8px'}, h('label', {}, 'Длина куска, мин'), h('input', {type: 'number', min: 0.5, step: 0.5, value: st.chunk_minutes, onchange: e => patch({chunk_minutes: +e.target.value})}))),
       h('div', {class: 'stage'}, h('h3', {}, '2 · Монтаж', toggle('montage', 'Автоматически искать моменты и монтировать')),
         h('div', {style: 'margin-bottom:6px'}, h('span', {class: 'pill ' + (st.working ? 'good' : '')}, st.working ? 'идёт монтаж' : st.montage ? 'ждёт кусок' : 'выключен')),

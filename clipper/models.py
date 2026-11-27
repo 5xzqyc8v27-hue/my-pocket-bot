@@ -77,6 +77,8 @@ class Moment(BaseModel):
     category: str = Field(default="", description="Тип момента: смешное, мем, фейл, эмоция, конфликт, скилл, цитата, история")
     hooks: list[str] = Field(default_factory=list, description="2-3 альтернативные надписи-хука")
     inserts: list[Insert] = Field(default_factory=list)
+    chat_user: str = ""  # ник автора сообщения из чата (для раскладки «чат + реакция»)
+    chat_text: str = ""
 
     @property
     def duration(self) -> float:
@@ -84,7 +86,7 @@ class Moment(BaseModel):
 
 
 class Preset(BaseModel):
-    """Оформление ролика. Раскладки: split, center, square, reaction."""
+    """Оформление ролика. Раскладки: split, center, square, reaction, chat."""
 
     name: str = "center"
     layout: str = "center"
@@ -126,6 +128,8 @@ class Preset(BaseModel):
     saturation: float = 1.0
     border: int = 0
     border_color: str = "FFFFFF"
+    chat_nick_color: str = "A970FF"
+    chat_hide_nick: bool = False
     # движение камеры: none, push (медленный наезд), punch (резкие наезды на громких местах), both
     camera: str = "none"
     camera_strength: float = 0.12

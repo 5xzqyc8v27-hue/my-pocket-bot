@@ -6,7 +6,7 @@ from pathlib import Path
 from .media import run
 from .top import has_audio
 from .models import Moment, Preset, Transcript
-from .subtitles import build_ass
+from .subtitles import build_ass, chat_lines
 
 
 def _even(x: float) -> int:
@@ -51,7 +51,8 @@ def insert_filters(inserts: list, first_input: int, preset: Preset, last: str) -
 
 
 def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: str | None,
-                 camera: str | None = None, inserts: list | None = None, first_insert: int = 0) -> str:
+                 camera: str | None = None, inserts: list | None = None, first_insert: int = 0,
+                 chat_rows: int = 0) -> str:
     """Собирает filter_complex под раскладку. Входы: 0 — исходник, 1 — залипалка, далее баннер."""
     W, H = preset.width, preset.height
     layout = preset.layout
@@ -91,6 +92,16 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
         game = f"scale=iw*{preset.content_zoom}:-2,{_cover(W, H - cam_h)}"
         order = "[cam][game]" if preset.webcam_position == "top" else "[game][cam]"
         parts += ["[src]split=2[a][b]", f"[a]{cam}[cam]", f"[b]{game}[game]", f"{order}vstack[v]"]
+    elif layout == "chat":
+        cam_h = _even(H * preset.webcam_share)
+        x, y, w, h = preset.webcam
+        low = (f"[1:v]{_cover(W, H - cam_h)},setsar=1[low]" if has_filler  # фото стримера снизу
+               else f"[b]scale=iw*{preset.content_zoom}:-2,{_cover(W, H - cam_h)}[low]")
+        box_h = 40 + max(1, chat_rows) * 55
+        parts += ["[src]split=2[a][b]" if not has_filler else "[src]null[a]",
+                  f"[a]crop=iw*{w}:ih*{h}:iw*{x}:ih*{y},{_cover(W, cam_h)}[cam]", low,
+                  f"[cam][low]vstack,drawbox=x={int(W * 0.03)}:y={cam_h - box_h // 2}:w={int(W * 0.94)}"
+                  f":h={box_h}:color=black@0.93:t=fill[v]"]
     else:
         raise ValueError(f"Неизвестная раскладка: {preset.layout}")
 
@@ -120,20 +131,24 @@ def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcrip
              filler: Path | None, tmp: Path, camera: str | None = None,
              inserts: list | None = None) -> list[str]:
     """Общая часть команды ffmpeg для ролика и для кадра предпросмотра."""
-    use_filler = bool(filler) and preset.layout == "split"
+    use_filler = bool(filler) and preset.layout in ("split", "chat")
     banner = Path(preset.banner) if preset.banner else None
     if banner and not banner.exists():
         banner = None
     words = transcript.words_between(moment.start, moment.end) if transcript else []
+    chat = (moment.chat_user, moment.chat_text) if moment.chat_text.strip() else None
+    rows = len(chat_lines(*chat, preset)) if chat and preset.layout == "chat" else 0
     ass_name = None
-    if (preset.subtitles and words) or (preset.title and moment.title.strip()) or preset.watermark.strip():
+    if (preset.subtitles and words) or (preset.title and moment.title.strip()) or preset.watermark.strip() or rows:
         ass_name = "subs.ass"
         (tmp / ass_name).write_text(
-            build_ass(words, moment.start, moment.duration / preset.speed, moment.title, preset),
+            build_ass(words, moment.start, moment.duration / preset.speed, moment.title, preset, chat),
             encoding="utf-8")
     cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{moment.start:.3f}", "-t", f"{moment.duration:.3f}",
            "-i", str(source.resolve())]
-    if use_filler:
+    if use_filler and str(filler).lower().endswith(IMAGE_EXT):
+        cmd += ["-loop", "1", "-t", f"{moment.duration:.3f}", "-i", str(Path(filler).resolve())]
+    elif use_filler:
         cmd += ["-stream_loop", "-1", "-i", str(Path(filler).resolve())]
     if banner:
         cmd += ["-i", str(banner.resolve())]
@@ -146,7 +161,7 @@ def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcrip
             cmd += ["-t", f"{ins.duration:.3f}"]
         cmd += ["-i", ins.file]
     return cmd + ["-filter_complex", build_filter(preset, use_filler, bool(banner), ass_name, camera,
-                                                  inserts, first)]
+                                                  inserts, first, rows)]
 
 
 class _Ins:
@@ -174,7 +189,7 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
             inserts.append(_Ins(str(path.resolve()), ins.at, min(ins.duration, out_len - ins.at), ins.place, ins.scale))
     with tempfile.TemporaryDirectory() as tmp:
         cmd = _prepare(source, moment, preset, transcript, filler, Path(tmp), camera, inserts)
-        first = 1 + int(bool(filler) and preset.layout == "split") + int(bool(preset.banner and Path(preset.banner).exists()))
+        first = 1 + int(bool(filler) and preset.layout in ("split", "chat")) + int(bool(preset.banner and Path(preset.banner).exists()))
         sounds = [i for i in inserts if not i.file.lower().endswith(IMAGE_EXT) and has_audio(Path(i.file))]
         main_audio = has_audio(source)
         if sounds:  # звук вставок подмешиваем к основной дорожке в нужный момент

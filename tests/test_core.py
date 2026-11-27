@@ -55,3 +55,20 @@ def test_trends_ranking_uses_growth_and_window():
     assert day[0]["id"] == "b" and day[0]["growth"] == 90000  # старый ролик, но резко растёт
     assert {r["id"] for r in day} == {"a", "b", "c"}
     assert [r["id"] for r in ranking(videos, "30d", now)][0] == "b"
+
+
+def test_chat_parse_and_read_detection():
+    from clipper.chat import find_read_messages, parse_line
+    assert parse_line(":vasya!vasya@vasya.tmi.twitch.tv PRIVMSG #zloy :Как думаешь насчет лаборатории?") == (
+        "vasya", "Как думаешь насчет лаборатории?")
+    assert parse_line("PING :tmi.twitch.tv") is None
+    tr = Transcript(duration=120, segments=[
+        Segment(start=10, end=14, text="сегодня играем в гта"),
+        Segment(start=40, end=45, text="как думаешь насчёт своей лаборатории с грязнульками"),
+        Segment(start=45, end=49, text="да ты тупишь бро я гений")])
+    chat = [{"t": 5, "user": "a", "text": "привет"},
+            {"t": 31, "user": "a774kl", "text": "Как думаешь насчет своей лаборатории с грязнульками?"},
+            {"t": 60, "user": "b", "text": "совсем другое длинное сообщение про погоду"}]
+    found = find_read_messages(tr, chat)
+    assert len(found) == 1 and found[0].chat_user == "a774kl"
+    assert 39 <= found[0].start <= 40 and found[0].end >= 49

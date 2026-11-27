@@ -1,0 +1,13 @@
+{
+  "name": "chat",
+  "layout": "chat",
+  "webcam": [
+    0.0,
+    0.0,
+    1.0,
+    1.0
+  ],
+  "webcam_share": 0.42,
+  "title": false,
+  "subtitles": false
+}

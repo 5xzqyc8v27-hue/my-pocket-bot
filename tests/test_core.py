@@ -269,3 +269,14 @@ def test_looks_and_copies():
     assert "setpts=PTS/" in copy_filter(a) and clean_filters(0, 0) == [] and len(clean_filters(0.5, 0.5)) == 2
     graph = build_filter(Preset(name="t", look="cold", sharpen=0.4), False, False, None)
     assert "colorbalance" in graph and "unsharp" in graph
+
+
+def test_unloop_and_game_area():
+    from clipper.transcribe import unloop
+    from clipper.render import _area, build_filter
+    from clipper.models import Preset
+    assert unloop("Ні, ні, ні, ні, ні, ні, ні, ні, кінець").count("ні") <= 4
+    assert unloop("обычная фраза без повторов") == "обычная фраза без повторов"
+    assert _area("0.42,0,0.58,0.57") == (0.42, 0.0, 0.58, 0.57) and _area("") is None and _area("0.9,0,0.5,0.5") is None
+    g = build_filter(Preset(name="t", layout="reaction", game_area="0.42,0,0.58,0.57"), False, False, None)
+    assert "crop=iw*0.58:ih*0.57:iw*0.42:ih*0.0" in g

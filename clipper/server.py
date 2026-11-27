@@ -124,6 +124,10 @@ def fonts_of(p: dict) -> list[Path]:
     return [ASSETS / owner / "fonts" for owner in dict.fromkeys([p.get("streamer") or "common", "common"])]
 
 
+LANG_HINTS = {"uk": " Названия, подписи и хуки пиши на украинском языке.",
+              "en": " Названия, подписи и хуки пиши на английском языке."}
+
+
 def rules_of(p: dict) -> dict:
     """Правила конкурса стримера, к которому относится проект (пустой словарь, если правил нет)."""
     return state["streamers"].get(p.get("streamer") or "", {})
@@ -173,7 +177,7 @@ def analyze_job(pid: str, opts: dict) -> None:
             set_status(p, "transcribe", "Расшифровываю речь…")
             try:
                 from .transcribe import transcribe
-                tr = transcribe(video, opts["whisper"], opts["lang"] or None)
+                tr = transcribe(video, opts["whisper"], None if opts["lang"] in ("", "auto") else opts["lang"])
                 tr.duration = tr.duration or info["duration"]
             except ImportError:
                 p["warning"] = "faster-whisper не установлен — без субтитров и выбора по смыслу"
@@ -187,7 +191,8 @@ def analyze_job(pid: str, opts: dict) -> None:
         p["scenes"] = detect_scenes(video)
         set_status(p, "moments", "Ищу сильные моменты…")
         moments, used = pick(video, tr, opts["picker"], opts["count"], opts["min"], opts["max"],
-                             log=lambda msg: set_status(p, "moments", msg), focus=opts.get("focus", ""),
+                             log=lambda msg: set_status(p, "moments", msg),
+                             focus=(opts.get("focus", "") + LANG_HINTS.get(opts.get("lang", ""), "")).strip(),
                              avoid=rules_of(p).get("rule_avoid", ""))
         if not video.with_suffix(".chat.jsonl").exists() and "twitch.tv/videos" in p["source"]:
             set_status(p, "moments", "Скачиваю чат трансляции…")
@@ -583,6 +588,7 @@ class StreamerReq(BaseModel):
     chunk_minutes: float = 10
     delete_chunks: bool = False
     whisper: str = "small"
+    lang: str = "ru"  # язык речи стримера: ru, uk, en или auto
     # правила конкурса стримера
     rule_link: str = ""       # обязательная ссылка в подписи, например «twitch: ZLOYn»
     rule_no_split: bool = False  # запрещён сплит с отвлекающим видео
@@ -609,7 +615,7 @@ def process_chunk(st: dict, chunk: Path) -> int:
                                   "message": "В очереди", "moments": [], "clips": [], "filler": "",
                                   "streamer": st["id"], "auto": True, "created": time.time()}
     analyze_job(pid, {"picker": st["picker"], "count": st["per_chunk"], "min": 15, "max": 60,
-                      "whisper": st["whisper"], "lang": "ru", "focus": st["focus"]})
+                      "whisper": st["whisper"], "lang": st.get("lang") or "ru", "focus": st["focus"]})
     p = state["projects"][pid]
     if p["status"] == "error":
         raise RuntimeError(p["message"])

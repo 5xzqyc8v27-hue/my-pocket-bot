@@ -19,6 +19,17 @@ def _cover(w: int, h: int) -> str:
     return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
 
 
+def _area(text: str) -> tuple[float, float, float, float] | None:
+    """«x,y,ширина,высота» в долях кадра -> числа; None, если строка пустая или с ошибкой."""
+    try:
+        x, y, w, h = (float(v) for v in text.replace(";", ",").split(","))
+    except ValueError:
+        return None
+    if not (0 <= x < 1 and 0 <= y < 1 and 0.05 <= w <= 1 - x + 1e-6 and 0.05 <= h <= 1 - y + 1e-6):
+        return None
+    return x, y, w, h
+
+
 def camera_filter(preset: Preset, length: float, peaks: list[float], events: list[float] | None = None) -> str | None:
     """Движение камеры по готовому кадру: медленный наезд и резкие наезды на громких местах."""
     k, fps = preset.camera_strength, preset.fps
@@ -112,8 +123,13 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
         x, y, w, h = preset.webcam
         cam = f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y},{_cover(W, cam_h)}"
         side = 1.0 if x + w / 2 < 0.35 else 0.0 if x + w / 2 > 0.65 else 0.5  # игру берём подальше от вебки
-        game = (f"scale=iw*{preset.content_zoom}:-2,scale={W}:{H - cam_h}:force_original_aspect_ratio=increase,"
-                f"crop={W}:{H - cam_h}:(iw-{W})*{side}:(ih-{H - cam_h})/2")
+        area = _area(preset.game_area)
+        if area:  # в кадре несколько окон — берём только окно с игрой
+            gx, gy, gw, gh = area
+            game = f"crop=iw*{gw}:ih*{gh}:iw*{gx}:ih*{gy},scale=iw*{preset.content_zoom}:-2,{_cover(W, H - cam_h)}"
+        else:
+            game = (f"scale=iw*{preset.content_zoom}:-2,scale={W}:{H - cam_h}:force_original_aspect_ratio=increase,"
+                    f"crop={W}:{H - cam_h}:(iw-{W})*{side}:(ih-{H - cam_h})/2")
         order = "[cam][game]" if preset.webcam_position == "top" else "[game][cam]"
         parts += ["[src]split=2[a][b]", f"[a]{cam}[cam]", f"[b]{game}[game]", f"{order}vstack[v]"]
     elif layout == "full":  # без вебки: вертикальный кусок кадра на весь экран

@@ -34,6 +34,12 @@ def _sherpa_files(size: str) -> tuple[Path, Path, Path, Path]:
             folder / f"{size}-tokens.txt", vad)
 
 
+def unloop(text: str) -> str:
+    """На шуме и музыке распознавание зацикливается («ні, ні, ні…» сто раз) — оставляем не больше трёх повторов."""
+    import re
+    return re.sub(r"(\b[\w'’]+(?:\s+[\w'’]+)?[,.!?]?\s+)(?:\1){3,}", r"\1\1\1", text + " ").strip()
+
+
 def transcribe_sherpa(video: Path, model_size: str = "small", language: str | None = "ru") -> Transcript:
     """Запасной движок: sherpa-onnx. Модели берутся с GitHub, пословных таймингов нет (фразы целиком)."""
     import subprocess
@@ -62,11 +68,12 @@ def transcribe_sherpa(video: Path, model_size: str = "small", language: str | No
             samples = np.array(seg.samples, dtype=np.float32)
             # Движок ограничивает число слов длиной звука, и скороговорка обрезается —
             # дополняем кусок тишиной, чтобы быстрой речи хватило места.
-            pad = max(0, int(max(len(samples) * 2.5, 8 * 16000)) - len(samples))
+            # Больше 30 секунд движок не принимает — остаток бы отбросил.
+            pad = max(0, min(int(max(len(samples) * 2.5, 8 * 16000)), 29 * 16000) - len(samples))
             stream = rec.create_stream()
             stream.accept_waveform(16000, np.concatenate([samples, np.zeros(pad, dtype=np.float32)]))
             rec.decode_stream(stream)
-            text = stream.result.text.strip()
+            text = unloop(stream.result.text.strip())
             if text:
                 start = seg.start / 16000
                 out.segments.append(Segment(start=round(start, 2), end=round(start + len(samples) / 16000, 2), text=text))

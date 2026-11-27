@@ -242,6 +242,8 @@ dialog .card{background:transparent;border:0;padding:0;box-shadow:none}
       <div class="field"><label>Кто выбирает моменты</label><select id="picker"></select></div>
       <div class="field"><label>Распознавание речи</label>
         <select id="whisper"><option value="small">Быстрое (small)</option><option value="medium">Точнее (medium)</option><option value="large-v3">Лучшее (large-v3)</option><option value="off">Выключить</option></select></div>
+      <div class="field"><label>Язык речи</label>
+        <select id="lang"><option value="ru">Русский</option><option value="uk">Украинский</option><option value="en">Английский</option><option value="auto">Определить сам</option></select></div>
       <div class="field"><label>Стример (для его материалов)</label><input type="text" id="streamer" list="owners" placeholder="например evelone"><datalist id="owners"></datalist></div>
       <div class="field"><label>Залипалка для сплита (путь, необязательно)</label><input type="text" id="filler" placeholder="/Users/…/loop.mp4"></div>
       </div></details>
@@ -284,6 +286,7 @@ const TABS = {
     ['content_zoom', 'Масштаб контента', 'range', [1, 1.6, 0.01]],
     ['background_blur', 'Размытие фона', 'range', [0, 60, 1]],
     ['split_share', 'Доля ролика в сплите', 'range', [0.3, 0.7, 0.01]],
+    ['game_area', 'Игра в исходнике, если в кадре несколько окон: x,y,ширина,высота (доли кадра)', 'text'],
     ['webcam_position', 'Вебка', 'select', {top: 'Сверху', bottom: 'Снизу'}],
     ['webcam_share', 'Высота вебки', 'range', [0.2, 0.6, 0.01]],
     ['webcam.0', 'Вебка в исходнике: слева', 'range', [0, 1, 0.01]],
@@ -551,6 +554,7 @@ function rulesBlock(st) {
     h('h3', {}, 'Правила конкурса', h('button', {class: 'btn small', title: 'Подставить правила конкурса нарезок Злого', onclick: async () => patch(await (await api('/api/rules/zloy')).json())}, 'Заполнить правилами Злого'), h('button', {class: 'btn small', title: 'Оффер UPG под нарезки Kalatay, уровень 1: вебка 0.7 $ и банер 0.2 $ за 1000 просмотров', onclick: async () => patch(await (await api('/api/rules/upg1')).json())}, 'Оффер UPG · Level 1'), h('button', {class: 'btn small', title: 'Оффер UPG, уровень 2: вебка 1 $ и банер 0.3 $ за 1000 просмотров', onclick: async () => patch(await (await api('/api/rules/upg2')).json())}, 'Оффер UPG · Level 2')),
     h('div', {class: 'row'}, text('rule_link', 'Обязательная ссылка в подписи', 'например: twitch: ZLOYn'),
       h('div', {class: 'field', style: 'flex:0 0 190px'}, h('label', {}, 'Срок приёма, дней'), h('input', {type: 'number', min: 0, value: st.rule_days || 0, onchange: e => patch({rule_days: +e.target.value})}))),
+    h('div', {class: 'field', style: 'max-width:260px'}, h('label', {}, 'Язык речи стримера (для субтитров и названий)'), h('select', {onchange: e => patch({lang: e.target.value})}, Object.entries({ru: 'Русский', uk: 'Украинский', en: 'Английский', auto: 'Определить сам'}).map(([v, n]) => h('option', {value: v, selected: v === (st.lang || 'ru')}, n)))),
     text('rule_tiers', 'Пороги выплат — просмотры:нарезка $:мем-видео $', '100000:25:7.5, 500000:115:20'),
     h('div', {class: 'row'}, text('rule_rates', 'Оплата за просмотры — формат:$ за 1000:минимум просмотров', 'вебка:0.7:6000, банер:0.2:10000'), text('rule_ad_len', 'Длина ролика с баннером, секунд', '15-60')),
     text('rule_avoid', 'За что могут не заплатить (такие моменты помечаются, но не отбрасываются)', 'политика, запрещённые вещества…'),
@@ -921,7 +925,7 @@ $('#add').onclick = async () => {
     let source = $('#src').value.trim(); const f = $('#file').files[0];
     if (f) { btn.textContent = 'Загружаю файл…'; source = (await (await fetch('/api/upload?name=' + encodeURIComponent(f.name), {method: 'PUT', body: f})).json()).path; }
     if (!source) throw new Error('Укажите ссылку, путь или выберите файл');
-    const r = await (await api('/api/projects', 'POST', {source, picker: $('#picker').value, count: +$('#count').value, min: +$('#min').value, max: +$('#max').value, whisper: $('#whisper').value, filler: $('#filler').value, streamer: $('#streamer').value, focus: $('#focus').value, auto_preset: $('#autoPreset').value})).json();
+    const r = await (await api('/api/projects', 'POST', {source, picker: $('#picker').value, count: +$('#count').value, min: +$('#min').value, max: +$('#max').value, whisper: $('#whisper').value, lang: $('#lang').value, filler: $('#filler').value, streamer: $('#streamer').value, focus: $('#focus').value, auto_preset: $('#autoPreset').value})).json();
     cur = r.id; mom = 0; picked = new Set(); view = 'Проект'; $('#src').value = ''; $('#file').value = ''; $('#newSource').close(); await refresh(true);
   } catch (e) { alert(e.message); }
   btn.disabled = false; btn.textContent = 'Найти моменты';

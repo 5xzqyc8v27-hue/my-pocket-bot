@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from .analysis import detect_scenes, uniqueness
 from .capcut import default_drafts_dir, export_draft
 from .chat import find_read_messages, load_chat
+from .compile import find_themes, render_compilation
 from .media import fetch, probe
 from . import trends
 from .models import Insert, Moment, Preset, Transcript
@@ -67,11 +68,11 @@ async def require_password(request: Request, call_next):
                                 headers={"WWW-Authenticate": 'Basic realm="Clipper"'})
     return await call_next(request)
 lock = threading.RLock()
-state: dict = {"projects": {}, "references": {}, "streamers": {}, "watch": {}, "trend_videos": {}, "accounts": {}}
+state: dict = {"projects": {}, "references": {}, "streamers": {}, "watch": {}, "trend_videos": {}, "accounts": {}, "themes": {}}
 ASSETS = DATA / "assets"
 KINDS = {"photos": "Фото и вырезки", "emoji": "Эмодзи и стикеры", "fonts": "Шрифты", "sounds": "Звуки",
          "banners": "Баннеры", "fillers": "Залипалки", "templates": "Шаблоны",
-         "memes": "Мем-вставки"}
+         "memes": "Мем-вставки", "music": "Музыка"}
 
 
 def load_state() -> None:
@@ -84,7 +85,7 @@ def load_state() -> None:
     state.setdefault("references", {})
     for st in state["streamers"].values():
         st.update(recording=False, live=False, working="", last_check=0)
-    for key in ("watch", "trend_videos", "accounts"):
+    for key in ("watch", "trend_videos", "accounts", "themes"):
         state.setdefault(key, {})
     for r in state["references"].values():
         if r["status"] == "work":
@@ -174,14 +175,21 @@ def analyze_job(pid: str, opts: dict) -> None:
         set_status(p, "error", str(exc)[:500])
 
 
-def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False) -> None:
+def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False, styles: int = 1) -> None:
     p = state["projects"][pid]
     video, tr = Path(p["video"]), transcript_of(p)
     out_dir = DATA / "clips" / pid
     try:
-        for n, i in enumerate(indexes, 1):
+        jobs = [(i, base) for i in indexes]
+        if styles > 1:  # тот же момент в других пресетах — каждый со своей вариацией
+            others = [x for x in (Preset.load(str(f), PRESETS) for f in sorted(PRESETS.glob("*.json")))
+                      if x.name != base.name and x.layout not in ("chat", "split")]
+            random.shuffle(others)
+            jobs += [(i, o) for i in indexes for o in others[:styles - 1]]
+            indexes = [j[0] for j in jobs]
+        for n, (i, chosen) in enumerate(jobs, 1):
             m = Moment.model_validate(p["moments"][i])
-            preset = vary(base, seed=int(time.time() * 1000) + i) if varied else base
+            preset = vary(chosen, seed=int(time.time() * 1000) + n) if (varied or chosen is not base) else chosen
             set_status(p, "render", f"Монтирую {n} из {len(indexes)}: {m.title or 'без названия'}")
             name = f"{int(m.start):05d}_{slug(m.title)}_{preset.name}_{uuid.uuid4().hex[:4]}.mp4"
             render_clip(video, m, preset, out_dir / name, tr, filler_of(p, preset), resolve=resolve_asset)
@@ -233,6 +241,7 @@ class RenderReq(BaseModel):
     moments: list[int]
     preset: Preset
     vary: bool = False
+    styles: int = 1  # сколько разных стилей сделать из каждого момента
 
 
 @app.get("/")
@@ -249,6 +258,7 @@ def get_state():
                 "assets": list_assets(), "kinds": KINDS, "streamers": state["streamers"],
                 "disk_free_gb": round(shutil.disk_usage(DATA).free / 1e9, 1),
                 "watch": state["watch"], "accounts": state["accounts"], "profile": PROFILE,
+                "themes": state["themes"], "theme_status": theme_status,
                 "fetching": sorted(fetching)}
 
 
@@ -385,7 +395,7 @@ def render(req: RenderReq):
     if bad or not req.moments:
         raise HTTPException(400, "Выберите моменты для монтажа")
     set_status(p, "render", "Запускаю монтаж…")
-    threading.Thread(target=render_job, args=(req.project, req.moments, req.preset, req.vary), daemon=True).start()
+    threading.Thread(target=render_job, args=(req.project, req.moments, req.preset, req.vary, max(1, min(req.styles, 5))), daemon=True).start()
     return {"ok": True}
 
 
@@ -585,6 +595,104 @@ def make_top(req: TopReq):
         raise HTTPException(400, "Введите заголовок топа")
     set_status(p, "render", "Собираю топ…")
     threading.Thread(target=top_job, args=(req.project, req), daemon=True).start()
+    return {"ok": True}
+
+
+# ---------- тематические подборки из нескольких трансляций ----------
+
+theme_status: dict = {"busy": False, "message": ""}
+
+
+class ThemesReq(BaseModel):
+    streamer: str = ""  # пусто — по всем проектам
+    count: int = 5
+
+
+class ThemeRenderReq(BaseModel):
+    preset: Preset
+    music: str = ""  # материал «владелец/music/имя»
+
+
+def themes_job(streamer: str, count: int) -> None:
+    try:
+        sources = []
+        for pid, p in list(state["projects"].items()):
+            if p.get("video") and (not streamer or p.get("streamer") == streamer):
+                tr = transcript_of(p)
+                if tr and tr.segments:
+                    tr.duration = p.get("duration") or tr.duration  # длина самого видео надёжнее
+                    sources.append((pid, p["title"], tr))
+        if not sources:
+            raise RuntimeError("Нет трансляций с расшифровкой речи — сначала обработайте исходники")
+        theme_status["message"] = f"Ищу темы в {len(sources)} трансляциях…"
+        found = find_themes(sources[-25:], count)
+        with lock:
+            for th in found:
+                tid = uuid.uuid4().hex[:8]
+                state["themes"][tid] = {"id": tid, "streamer": streamer, **th.model_dump(), "created": time.time()}
+        theme_status["message"] = f"Найдено тем: {len(found)}"
+    except Exception as exc:
+        traceback.print_exc()
+        theme_status["message"] = f"Ошибка: {str(exc)[:300]}"
+    theme_status["busy"] = False
+    save_state()
+
+
+@app.post("/api/themes")
+def find_themes_api(req: ThemesReq):
+    if theme_status["busy"]:
+        raise HTTPException(409, "Поиск тем уже идёт")
+    theme_status.update(busy=True, message="Запускаю поиск тем…")
+    threading.Thread(target=themes_job, args=(req.streamer, max(1, min(req.count, 10))), daemon=True).start()
+    return {"ok": True}
+
+
+@app.delete("/api/themes/{tid}")
+def delete_theme(tid: str):
+    with lock:
+        state["themes"].pop(tid, None)
+    save_state()
+    return {"ok": True}
+
+
+def theme_render_job(tid: str, req: ThemeRenderReq) -> None:
+    th = state["themes"][tid]
+    try:
+        pieces = []
+        for piece in th["pieces"]:
+            p = state["projects"].get(piece["project"])
+            if p and p.get("video") and Path(p["video"]).exists() and piece["end"] <= p.get("duration", 1e9) + 0.5:
+                pieces.append((Path(p["video"]), Moment(start=piece["start"], end=piece["end"], title=""), None))
+        if len(pieces) < 2:
+            raise RuntimeError("Исходные трансляции этой темы удалены или куски выходят за пределы видео")
+        home = next(p for p in state["projects"].values() if p.get("video") == str(pieces[0][0]))
+        name = f"podborka_{slug(th['title'])}_{uuid.uuid4().hex[:4]}.mp4"
+        music = resolve_asset(req.music) if req.music else None
+        render_compilation(pieces, th["title"], req.preset, DATA / "clips" / home["id"] / name, music,
+                           filler_of(home, req.preset))
+        with lock:
+            home.setdefault("clips", []).insert(0, {
+                "file": name, "title": th["title"], "caption": th.get("why", ""), "hashtags": [], "kind": "theme",
+                "score": 0, "profanity": False, "preset": req.preset.name + " · подборка",
+                "start": pieces[0][1].start, "end": pieces[0][1].end, "speed": 1.0, "created": time.time()})
+            th.update(status="ready", clip=name, clip_project=home["id"], message="Готово")
+    except Exception as exc:
+        traceback.print_exc()
+        with lock:
+            th.update(status="error", message=str(exc)[:300])
+    save_state()
+
+
+@app.post("/api/themes/{tid}/render")
+def render_theme(tid: str, req: ThemeRenderReq):
+    th = state["themes"].get(tid)
+    if not th:
+        raise HTTPException(404, "Тема не найдена")
+    if th.get("status") == "work":
+        raise HTTPException(409, "Эта подборка уже монтируется")
+    with lock:
+        th.update(status="work", message="Монтирую…")
+    threading.Thread(target=theme_render_job, args=(tid, req), daemon=True).start()
     return {"ok": True}
 
 

@@ -184,9 +184,9 @@ const SUB_STYLES = {
   'По слову': {subtitle_color: 'FFE600', subtitle_highlight: 'FFFFFF', subtitle_upper: true, subtitle_words: 1, subtitle_size: 100},
   'Спокойные': {subtitle_color: 'E8EAED', subtitle_highlight: 'FF8AD8', subtitle_upper: false, subtitle_words: 4, subtitle_size: 58},
 };
-let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''};
+let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''}, themeStreamer = '', themeMusic = '', styleCount = 1;
 let view = 'Проект', owner = 'common', kind = 'photos';
-let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: []}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
+let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: [], themes: {}, theme_status: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
 
 const getP = k => k.includes('.') ? preset[k.split('.')[0]][+k.split('.')[1]] : preset[k];
 function setP(k, v) { if (k.includes('.')) { const [a, i] = k.split('.'); preset[a][+i] = v; } else preset[k] = v; queuePreview(); }
@@ -403,6 +403,28 @@ function renderAccounts() {
     h('div', {class: 'card'}, h('h2', {}, 'Автопостинг'), h('div', {class: 'mute'}, 'Пока не подключён. Для него нужен сервис-посредник (например Blotato) или официальные доступы YouTube и TikTok — вход в аккаунты выполняется на их стороне, а не паролем в этой панели.')));
 }
 
+function renderThemes() {
+  const list = Object.values(S.themes).filter(t => !themeStreamer || t.streamer === themeStreamer).sort((a, b) => b.created - a.created);
+  const music = []; for (const o of Object.keys(S.assets)) for (const f of ((S.assets[o] || {}).music || [])) music.push(`${o}/music/${f}`);
+  const fmt = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+  $('#main').replaceChildren(
+    h('div', {}, h('h1', {}, 'Подборки'), h('div', {class: 'mute'}, 'Claude читает расшифровки всех трансляций стримера и находит темы: повторяющиеся приколы, словечки, похожие реакции. Каждая тема — несколько коротких кусков из разных трансляций под одним заголовком.')),
+    h('div', {class: 'card'}, h('div', {class: 'row'},
+      h('div', {class: 'field', style: 'margin:0'}, h('label', {}, 'Чьи трансляции'), h('select', {onchange: e => { themeStreamer = e.target.value; renderThemes(); }}, h('option', {value: ''}, 'Все проекты'), [...new Set(Object.values(S.projects).map(p => p.streamer).filter(x => x && x !== 'common'))].map(x => h('option', {value: x, selected: x === themeStreamer}, (S.streamers[x] || {}).name || x)))),
+      h('div', {class: 'field', style: 'margin:0'}, h('label', {}, 'Оформление'), h('select', {onchange: e => { preset = structuredClone(S.presets.find(x => x.name === e.target.value)); }}, S.presets.map(x => h('option', {value: x.name, selected: x.name === preset.name}, x.name)))),
+      h('div', {class: 'field', style: 'margin:0'}, h('label', {}, 'Музыка (из материалов)'), h('select', {onchange: e => { themeMusic = e.target.value; }}, h('option', {value: ''}, music.length ? 'Без музыки' : 'Загрузите в «Материалы → Музыка»'), music.map(m => h('option', {value: m, selected: m === themeMusic}, m.split('/').pop())))),
+      h('button', {class: 'btn primary', style: 'flex:none;align-self:end', disabled: !!S.theme_status.busy, onclick: async () => { try { await api('/api/themes', 'POST', {streamer: themeStreamer, count: 5}); refresh(true); } catch (e) { alert(e.message); } }}, S.theme_status.busy ? 'Ищу…' : 'Найти темы')),
+      S.theme_status.message ? h('div', {class: 'mute', style: 'margin-top:8px'}, S.theme_status.message) : null),
+    ...(list.length ? list.map(t => h('div', {class: 'card'},
+      h('div', {class: 'row'}, h('div', {}, h('h1', {}, t.title), h('div', {class: 'mute'}, t.why)),
+        h('div', {style: 'flex:none'},
+          t.status === 'ready' && h('button', {class: 'btn small', onclick: () => { cur = t.clip_project; view = 'Проект'; renderAll(); }}, 'Открыть ролик'), ' ',
+          h('button', {class: 'btn small primary', disabled: t.status === 'work', onclick: async () => { try { await api(`/api/themes/${t.id}/render`, 'POST', {preset, music: themeMusic}); refresh(true); } catch (e) { alert(e.message); } }}, t.status === 'work' ? 'Монтирую…' : 'Смонтировать'), ' ',
+          h('button', {class: 'btn small', onclick: async () => { await api('/api/themes/' + t.id, 'DELETE'); refresh(true); }}, '×'))),
+      t.status === 'error' && h('div', {class: 'status error', style: 'margin-top:8px'}, t.message),
+      h('div', {style: 'margin-top:8px'}, t.pieces.map((x, n) => h('div', {class: 'kv'}, h('span', {}, `${n + 1}. ${(S.projects[x.project] || {}).title || 'трансляция удалена'}`), h('span', {}, `${fmt(x.start)} – ${fmt(x.end)} · ${(x.end - x.start).toFixed(0)} с`)))))) : [h('div', {class: 'empty'}, 'Тем пока нет. Нажмите «Найти темы» — нужны обработанные трансляции с расшифровкой речи.')]));
+}
+
 async function renderHealth() {
   if (!health) { $('#main').replaceChildren(h('div', {class: 'empty'}, 'Проверяю…')); health = await (await api('/api/health')).json(); if (view !== 'Настройка') return; }
   $('#main').replaceChildren(
@@ -417,6 +439,7 @@ function renderMain() {
   if (view === 'Настройка') return renderHealth();
   if (view === 'Стримеры') return renderStreamers();
   if (view === 'Тренды') return renderTrends();
+  if (view === 'Подборки') return renderThemes();
   if (view === 'Аккаунты') return renderAccounts();
   if (view === 'Материалы') return renderAssets();
   if (view === 'Примеры') return renderRefs();
@@ -448,9 +471,10 @@ function renderMain() {
     h('div', {class: 'preview'}, h('img', {id: 'pvimg', hidden: true, alt: 'Кадр ролика'}), h('div', {class: 'hint', id: 'pvhint'}, p.moments.length ? 'Загружаю кадр…' : 'Появится, когда найдутся моменты')),
     h('div', {class: 'field', style: 'margin-top:8px'}, h('label', {}, 'Момент ролика'), h('input', {type: 'range', min: 0, max: 0.98, step: 0.02, value: at, oninput: e => { at = +e.target.value; queuePreview(); }})),
     h('label', {class: 'check', title: 'Каждый ролик получит свою вариацию: положение и стиль текста, камера, скорость, цвет'}, h('input', {type: 'checkbox', checked: varyOn, onchange: e => { varyOn = e.target.checked; }}), 'Разнообразить ролики'),
+    h('div', {class: 'field'}, h('label', {}, 'Стилей на каждый момент'), h('select', {title: 'Тот же момент дополнительно монтируется в других пресетах', onchange: e => { styleCount = +e.target.value; }}, [1, 2, 3, 4].map(n => h('option', {value: n, selected: n === styleCount}, n === 1 ? 'Один (выбранный пресет)' : n + ' разных стиля')))),
     h('button', {class: 'btn primary', id: 'renderBtn', style: 'width:100%', disabled: busy || !p.moments.length, onclick: async () => {
       const list = picked.size ? [...picked] : p.moments.map((_, i) => i);
-      try { await api('/api/render', 'POST', {project: p.id, moments: list, preset, vary: varyOn && list.length > 1}); refresh(); } catch (e) { alert(e.message); } }}, 'Смонтировать все'),
+      try { await api('/api/render', 'POST', {project: p.id, moments: list, preset, vary: varyOn && list.length > 1, styles: styleCount}); refresh(); } catch (e) { alert(e.message); } }}, 'Смонтировать все'),
     h('button', {class: 'btn', style: 'width:100%;margin-top:8px', disabled: busy || !p.moments.length, title: 'Создать проект CapCut с этим моментом, хуком и субтитрами', onclick: async () => {
       try { const r = await (await api('/api/capcut', 'POST', {project: p.id, moment: mom, preset})).json();
         alert(r.capcut_found ? 'Черновик создан — откройте CapCut, он появится в списке проектов.' : 'CapCut на этом компьютере не найден. Черновик сохранён в папку:\n' + r.path); } catch (e) { alert(e.message); } }}, 'Открыть момент в CapCut'));
@@ -478,7 +502,7 @@ function renderMain() {
   updateRenderBtn(); queuePreview();
 }
 
-function renderNav() { $('#nav').replaceChildren(...['Стримеры', 'Проект', 'Тренды', 'Материалы', 'Примеры', 'Аккаунты', 'Настройка'].map(v => h('button', {class: 'tab' + (v === view ? ' active' : ''), onclick: () => { view = v; renderAll(); }}, v)));
+function renderNav() { $('#nav').replaceChildren(...['Стримеры', 'Проект', 'Подборки', 'Тренды', 'Материалы', 'Примеры', 'Аккаунты', 'Настройка'].map(v => h('button', {class: 'tab' + (v === view ? ' active' : ''), onclick: () => { view = v; renderAll(); }}, v)));
   $('.logo h1').textContent = 'Clipper' + (S.profile ? ' · ' + S.profile : '');
   $('#owners').replaceChildren(...Object.keys(S.assets).filter(o => o !== 'common').map(o => h('option', {value: o}))); }
 function renderAll() { renderNav(); renderProjects(); renderMain(); }
@@ -488,7 +512,7 @@ async function refresh(force) {
   if (!preset) preset = structuredClone(S.presets[0] || S.defaults);
   if (!$('#picker').options.length) $('#picker').append(...['auto', ...S.pickers].map(k => h('option', {value: k}, PICKERS[k] || k)));
   if (!cur || !S.projects[cur]) cur = Object.values(S.projects).sort((a, b) => b.created - a.created)[0]?.id || null;
-  const sig = JSON.stringify([S.projects, S.presets.map(p => p.name), cur, S.assets, S.references, S.watch, S.accounts, S.fetching, Object.values(S.streamers).map(x => ({...x, last_check: 0}))]);
+  const sig = JSON.stringify([S.projects, S.presets.map(p => p.name), cur, S.assets, S.references, S.watch, S.accounts, S.fetching, S.themes, S.theme_status, Object.values(S.streamers).map(x => ({...x, last_check: 0}))]);
   if (force || sig !== lastSig && !document.activeElement.matches('main input, main select')) { lastSig = sig; renderAll(); }
 }
 $('#add').onclick = async () => {

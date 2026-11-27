@@ -136,6 +136,10 @@ class Preset(BaseModel):
     brightness: float = 0.0
     contrast: float = 1.0
     saturation: float = 1.0
+    look: str = ""  # готовый стиль картинки из looks.LOOKS
+    look_strength: float = 0.5
+    denoise: float = 0.0  # шумоподавление 0..1
+    sharpen: float = 0.0  # резкость 0..1
     lut: str = ""  # цветокор: файл .cube из материалов («владелец/luts/имя») или путь
     lut_strength: float = 1.0
     transition: str = "none"  # подборки: none — встык, fade — мягкое затемнение между кусками

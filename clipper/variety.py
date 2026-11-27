@@ -33,4 +33,6 @@ def vary(preset: Preset, seed: int) -> Preset:
     p.saturation = round(rnd.uniform(1.0, 1.15), 2)
     p.contrast = round(rnd.uniform(1.0, 1.06), 2)
     p.camera = rnd.choice(CAMERAS)
+    if not p.look and not p.lut:  # лёгкий стиль картинки, если свой не выбран
+        p.look, p.look_strength = rnd.choice(["", "", "cinematic", "warm", "cold", "hdr", "sunset"]), round(rnd.uniform(0.2, 0.45), 2)
     return p

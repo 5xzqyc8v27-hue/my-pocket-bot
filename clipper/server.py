@@ -1617,6 +1617,43 @@ def delete_clip(pid: str, name: str):
     return {"ok": True}
 
 
+class CopiesReq(BaseModel):
+    count: int = 3
+    look: str = ""
+
+
+@app.post("/api/copies/{pid}/{name}")
+def clip_copies(pid: str, name: str, req: CopiesReq):
+    """Несколько копий готового ролика: чуть разные приближение, скорость и цвет."""
+    from .looks import make_copy
+    p = project(pid)
+    clip = next((c for c in p["clips"] if c["file"] == name), None)
+    if not clip:
+        raise HTTPException(404, "Ролик не найден")
+    if p["status"] not in ("ready", "error"):
+        raise HTTPException(409, "Проект занят — дождитесь окончания текущей задачи")
+    count, src = max(1, min(req.count, 10)), clip_path(pid, name)
+
+    def job():
+        try:
+            for n in range(1, count + 1):
+                set_status(p, "render", f"Делаю копию {n} из {count}")
+                new = f"{Path(name).stem}_k{uuid.uuid4().hex[:4]}.mp4"
+                params = make_copy(src, src.parent / new, int(time.time() * 1000) + n, req.look)
+                with lock:
+                    p["clips"].insert(0, {**clip, "file": new, "preset": clip.get("preset", "") + " · копия",
+                                          "speed": clip.get("speed", 1.0) * params["speed"], "created": time.time(),
+                                          "check": None})
+            set_status(p, "ready", f"Копий готово: {count}")
+        except Exception as exc:
+            traceback.print_exc()
+            set_status(p, "error", str(exc)[:500])
+
+    set_status(p, "render", "Делаю копии…")
+    threading.Thread(target=job, daemon=True).start()
+    return {"ok": True}
+
+
 @app.post("/api/check/{pid}/{name}")
 def check_clip(pid: str, name: str):
     """Проверка уникальности: сравнение ролика с исходным отрезком."""

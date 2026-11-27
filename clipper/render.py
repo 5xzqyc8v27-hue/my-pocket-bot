@@ -81,6 +81,11 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
         pre.append("hflip")
     if (preset.brightness, preset.contrast, preset.saturation) != (0.0, 1.0, 1.0):
         pre.append(f"eq=brightness={preset.brightness}:contrast={preset.contrast}:saturation={preset.saturation}")
+    if preset.look or preset.denoise > 0 or preset.sharpen > 0:
+        from .looks import clean_filters, look_filter
+        pre += clean_filters(preset.denoise, preset.sharpen)
+        if look_filter(preset.look, preset.look_strength):
+            pre.append(look_filter(preset.look, preset.look_strength))
     if preset.speed != 1.0:
         pre.append(f"setpts=PTS/{preset.speed}")
     cam_times = cam_times if cam_times and layout in ("reaction", "chat") else None
@@ -329,7 +334,7 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
                 ["loudnorm=I=-14:TP=-1.5:LRA=11"] if preset.normalize else [])
             if chain and main_audio:
                 cmd += ["-af", ",".join(chain), "-ar", "48000"]
-        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-map_metadata", "-1",
                 "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out_path.resolve())]
         run(cmd, cwd=Path(tmp))  # cwd = tmp, чтобы не экранировать путь к субтитрам
     return out_path

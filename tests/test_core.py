@@ -257,3 +257,15 @@ def test_upg_offer_rates_and_ad_break_fields():
     assert rules.payout_rate(9999, rules.UPG_L2["rule_rates"], banner=True)["amount"] == 0
     assert rules.ad_len_note(30, "15-60") == "" and rules.ad_len_note(10, "15-60") and rules.ad_len_note(61, "15-60")
     assert Preset(name="t").ad_break == "" and Preset(name="t").ad_break_at == 0.5
+
+
+def test_looks_and_copies():
+    from clipper.looks import LOOKS, look_filter, copy_params, copy_filter, clean_filters
+    from clipper.models import Preset
+    from clipper.render import build_filter
+    assert all(look_filter(n, 0.5) for n in LOOKS) and look_filter("", 1) == "" and look_filter("нет", 1) == ""
+    a, b = copy_params(1), copy_params(2)
+    assert a != b and 1.0 < a["zoom"] <= 1.05 and 0.98 <= a["speed"] <= 1.03
+    assert "setpts=PTS/" in copy_filter(a) and clean_filters(0, 0) == [] and len(clean_filters(0.5, 0.5)) == 2
+    graph = build_filter(Preset(name="t", look="cold", sharpen=0.4), False, False, None)
+    assert "colorbalance" in graph and "unsharp" in graph

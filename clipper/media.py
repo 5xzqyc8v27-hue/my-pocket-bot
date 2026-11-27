@@ -35,6 +35,9 @@ def fetch(source: str, workdir: Path) -> Path:
         if not path.exists():
             raise FileNotFoundError(f"Файл не найден: {path}")
         return path
+    from . import kick
+    if kick.is_clip_url(source):  # клипы Kick лежат кусками в общих файлах — качаем сами
+        return kick.fetch_clip(source, workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     template = str(workdir / "%(id)s.%(ext)s")
     cmd = ["yt-dlp", "-f", "bv*[height<=1080]+ba/b[height<=1080]/b", "--merge-output-format", "mp4",

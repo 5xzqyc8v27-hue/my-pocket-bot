@@ -21,7 +21,7 @@ from .capcut import default_drafts_dir, export_draft
 from .face import apply_face, find_face
 from . import blotato
 from . import health as health_mod
-from . import history, llm, packs, rules
+from . import history, kick, llm, packs, rules
 from . import story as story_mod
 from .schedule import next_slots
 from .chat import chat_spikes, find_read_messages, load_chat
@@ -1357,13 +1357,14 @@ def streamer_history(sid: str, refresh: bool = False):
     st = state["streamers"].get(sid)
     if not st:
         raise HTTPException(404, "Стример не найден")
-    if st["platform"] not in ("twitch",):
-        raise HTTPException(400, "История трансляций пока доступна только для Twitch")
+    if st["platform"] not in ("twitch", "kick"):
+        raise HTTPException(400, "История трансляций доступна для Twitch и Kick")
     cached = history_cache.get(sid)
     if cached and not refresh and time.time() - cached["at"] < 1800:
         return cached["items"]
     try:
-        items = history.list_vods(st["platform"], st["channel"])
+        items = (kick.history_entries(st["channel"]) if st["platform"] == "kick"
+                 else history.list_vods(st["platform"], st["channel"]))
     except FileNotFoundError:
         raise HTTPException(400, "yt-dlp не установлен (pip install yt-dlp)")
     except Exception as exc:
@@ -1378,9 +1379,11 @@ def streamer_clips(sid: str, period: str = "7d"):
     st = state["streamers"].get(sid)
     if not st:
         raise HTTPException(404, "Стример не найден")
-    if st["platform"] != "twitch":
-        raise HTTPException(400, "Клипы зрителей пока доступны только для Twitch")
+    if st["platform"] not in ("twitch", "kick"):
+        raise HTTPException(400, "Клипы зрителей доступны для Twitch и Kick")
     try:
+        if st["platform"] == "kick":
+            return kick.clip_entries(st["channel"], period)
         return history.list_clips(st["channel"], period)
     except FileNotFoundError:
         raise HTTPException(400, "yt-dlp не установлен (pip install yt-dlp)")

@@ -280,3 +280,11 @@ def test_unloop_and_game_area():
     assert _area("0.42,0,0.58,0.57") == (0.42, 0.0, 0.58, 0.57) and _area("") is None and _area("0.9,0,0.5,0.5") is None
     g = build_filter(Preset(name="t", layout="reaction", game_area="0.42,0,0.58,0.57"), False, False, None)
     assert "crop=iw*0.58:ih*0.57:iw*0.42:ih*0.0" in g
+
+
+def test_kick_helpers():
+    from clipper import kick
+    assert kick.slug_of("https://kick.com/Kalatay3") == "kalatay3" and kick.slug_of("@kalatay3") == "kalatay3"
+    assert kick.is_clip_url("https://kick.com/kalatay3/clips/clip_01M0AF2BHRKA4SPKHCTGVWR818")
+    assert not kick.is_clip_url("https://kick.com/kalatay3/videos/abc")
+    assert kick.PERIODS["7d"] == "week" and kick._ts("2026-08-18") > 0

@@ -7,11 +7,13 @@
 
 ## Установка (macOS)
 
+Нужен Python 3.10 или новее (системный в macOS — 3.9, не подойдёт; `setup.sh` поставит нужный сам).
+
 Быстро: `bash setup.sh` (добавьте `--local-ai` для локальной нейросети). Вручную:
 
 ```bash
-brew install ffmpeg
-python3 -m venv .venv && source .venv/bin/activate
+brew install ffmpeg python@3.12
+"$(brew --prefix python@3.12)/bin/python3.12" -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 

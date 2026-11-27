@@ -395,6 +395,23 @@ def preview(req: PreviewReq):
     return FileResponse(out, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/projects/{pid}/zip")
+def clips_zip(pid: str):
+    """Все готовые ролики проекта одним архивом."""
+    import zipfile
+    p = project(pid)
+    files = [DATA / "clips" / pid / c["file"] for c in p.get("clips", [])]
+    files = [f for f in files if f.exists()]
+    if not files:
+        raise HTTPException(404, "Готовых роликов нет")
+    out = DATA / "preview" / f"{pid}.zip"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as z:
+        for f in files:
+            z.write(f, f.name)
+    return FileResponse(out, media_type="application/zip", filename=f"{slug(p['title'], 'clips')}.zip")
+
+
 @app.get("/api/projects/{pid}/frame")
 def source_frame(pid: str, at: float = 0.0):
     """Чистый кадр исходника — на нём мышкой выделяют вебку или часть кадра."""

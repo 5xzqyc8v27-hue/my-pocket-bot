@@ -121,6 +121,7 @@ class Preset(BaseModel):
     subtitle_y: float = 0.72
     subtitle_words: int = 3
     subtitle_upper: bool = False
+    normalize: bool = True  # выравнивать громкость до стандарта площадок (-14 LUFS)
     censor: bool = False  # закрывать мат звёздочками в субтитрах
     subtitle_pop: bool = False  # каждое слово «выпрыгивает»
     watermark: str = ""  # ник мелким текстом поверх кадра

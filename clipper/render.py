@@ -235,8 +235,10 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
             cmd += ["-map", "[out]", "-map", "[aout]", "-t", f"{out_len:.3f}"]
         else:
             cmd += ["-map", "[out]", "-map", "0:a?", "-t", f"{out_len:.3f}"]
-            if preset.speed != 1.0:
-                cmd += ["-af", f"atempo={preset.speed}"]
+            chain = ([f"atempo={preset.speed}"] if preset.speed != 1.0 else []) + (
+                ["loudnorm=I=-14:TP=-1.5:LRA=11"] if preset.normalize else [])
+            if chain and main_audio:
+                cmd += ["-af", ",".join(chain), "-ar", "48000"]
         cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
                 "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out_path.resolve())]
         run(cmd, cwd=Path(tmp))  # cwd = tmp, чтобы не экранировать путь к субтитрам

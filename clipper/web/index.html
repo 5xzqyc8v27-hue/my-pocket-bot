@@ -128,6 +128,23 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
 .moment,.proj,.stage{transition:border-color .12s}
 .moment:hover,.proj:hover{border-color:var(--mute)}
 @media(max-width:800px){aside{position:static;height:auto}}
+dialog#modal{width:min(1080px,96vw)}
+dialog#modal.narrow{width:min(620px,96vw)}
+.design{display:grid;grid-template-columns:1fr 300px;gap:18px;align-items:start}
+@media(max-width:800px){.design{grid-template-columns:1fr}}
+.mrow{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;margin-bottom:6px;background:var(--panel2)}
+.mrow input[type=text]{flex:1;min-width:0;background:transparent;border-color:transparent;font-weight:600;padding:5px 6px}
+.mrow input[type=text]:hover,.mrow input[type=text]:focus{border-color:var(--line);background:var(--panel)}
+.mrow .score{min-width:44px}
+.clips{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
+.clip{background:var(--panel2);border:1px solid var(--line);border-radius:14px;overflow:hidden;position:relative}
+.clip video{border-radius:0;display:block}
+.clip .body{padding:10px 12px 12px}
+.clip .badge2{position:absolute;top:10px;left:10px;background:rgba(0,0,0,.7);border:1px solid var(--accent);color:var(--accent);border-radius:99px;padding:1px 9px;font-weight:700;font-size:12px}
+.clip .row{gap:4px}.clip .row .btn{padding:4px 2px;font-size:11.5px}.clip .row .btn:last-child{flex:0 0 28px}
+.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+.bar .field{margin:0;flex:1;min-width:150px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
 </style>
 </head>
 <body>
@@ -146,20 +163,26 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
   <p class="mute" style="margin:0 0 12px">Ссылка на видео или стрим, путь к файлу на этом компьютере или загрузка файла. Панель расшифрует речь и найдёт сильные моменты.</p>
       <div class="field"><label>Ссылка или путь к файлу</label><input type="text" id="src" placeholder="https://… или /Users/…/video.mp4"></div>
       <div class="field"><label>Или загрузить файл</label><input type="file" id="file" accept="video/*"></div>
-      <div class="row">
-        <div class="field"><label>Роликов</label><input type="number" id="count" value="8" min="1" max="40"></div>
-        <div class="field"><label>От, с</label><input type="number" id="min" value="20" min="5"></div>
-        <div class="field"><label>До, с</label><input type="number" id="max" value="60" min="10"></div>
-      </div>
-      <div class="field"><label>Кто выбирает моменты</label><select id="picker"></select></div>
+      <div class="field"><label>Сколько роликов</label><div class="seg" id="segCount"></div></div>
+      <div class="field"><label>Длина ролика</label><div class="seg" id="segLen"></div></div>
       <div class="field"><label>Что искать</label>
         <select id="focus"><option value="">Всё сильное</option><option value="смешное, приколы, мемы">Смешное и мемы</option><option value="фейлы, провалы, неудачи">Фейлы</option><option value="яркие эмоции, крики, реакции">Эмоции и реакции</option><option value="конфликты, споры, ругань">Конфликты</option><option value="красивая игра, скилл, клатчи">Игровые моменты</option><option value="сильные мысли, цитаты, истории">Мысли и истории</option></select></div>
+      <div class="field"><label>Что сделать после анализа</label><select id="autoPreset"></select></div>
+      <details style="margin-bottom:12px"><summary class="mute" style="cursor:pointer">Дополнительно</summary><div style="margin-top:10px">
+      <div class="row">
+        <div class="field"><label>Роликов</label><input type="number" id="count" value="10" min="1" max="50"></div>
+        <div class="field"><label>От, с</label><input type="number" id="min" value="20" min="5"></div>
+        <div class="field"><label>До, с</label><input type="number" id="max" value="45" min="10"></div>
+      </div>
+      <div class="field"><label>Кто выбирает моменты</label><select id="picker"></select></div>
       <div class="field"><label>Распознавание речи</label>
         <select id="whisper"><option value="small">Быстрое (small)</option><option value="medium">Точнее (medium)</option><option value="large-v3">Лучшее (large-v3)</option><option value="off">Выключить</option></select></div>
       <div class="field"><label>Стример (для его материалов)</label><input type="text" id="streamer" list="owners" placeholder="например evelone"><datalist id="owners"></datalist></div>
       <div class="field"><label>Залипалка для сплита (путь, необязательно)</label><input type="text" id="filler" placeholder="/Users/…/loop.mp4"></div>
+      </div></details>
   <button class="btn primary" id="add" style="width:100%">Найти моменты</button>
 </dialog>
+<dialog id="modal"><div class="dlg-head"><h1 id="modalTitle"></h1><button class="btn small" id="modalClose" aria-label="Закрыть">×</button></div><div id="modalBody"></div></dialog>
 <dialog id="picker2">
   <div class="dlg-head"><h1 id="pickTitle">Выделите область</h1><button class="btn small" id="pickClose" aria-label="Закрыть">×</button></div>
   <p class="mute" id="pickHint" style="margin:0 0 10px"></p>
@@ -247,7 +270,9 @@ const SUB_STYLES = {
   'По слову': {subtitle_color: 'FFE600', subtitle_highlight: 'FFFFFF', subtitle_upper: true, subtitle_words: 1, subtitle_size: 100},
   'Спокойные': {subtitle_color: 'E8EAED', subtitle_highlight: 'FF8AD8', subtitle_upper: false, subtitle_words: 4, subtitle_size: 58},
 };
-let FONTS = [], commonTitle = '', ipInfo = null;
+let FONTS = [], commonTitle = '', ipInfo = null, modal = null;
+function openModal(kind) { modal = kind; renderMain(); }
+function closeModal() { modal = null; const d = $('#modal'); if (d.open) d.close(); }
 let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''}, themeStreamer = '', themeMusic = '', styleCount = 1, hist = {}, histPick = {}, story = {topic: '', script: '', title: '', voice: '', music: '', projects: new Set()}, histOpt = {preset: 'reaction', focus: '', count: 8};
 let view = 'Проект', owner = 'common', kind = 'photos';
 let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: [], themes: {}, theme_status: {}, queue: {}, story_status: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
@@ -637,10 +662,28 @@ function renderMain() {
 
   const cats = [...new Set(p.moments.map(m => m.category).filter(Boolean))];
   if (!cats.includes(catFilter)) catFilter = '';
-  const moments = h('div', {class: 'card'}, h('h2', {}, 'Моменты'),
+  const row = (m, i) => h('div', {class: 'mrow'},
+    h('input', {type: 'checkbox', checked: picked.has(i), title: 'Выбрать для монтажа', 'aria-label': 'Выбрать момент', onchange: e => { e.target.checked ? picked.add(i) : picked.delete(i); updateRenderBtn(); }}),
+    h('span', {class: 'score'}, '★' + m.score),
+    h('input', {type: 'text', value: m.title, placeholder: 'Надпись-хук', 'aria-label': 'Надпись-хук', onchange: e => api(`/api/projects/${p.id}/moments/${i}`, 'PATCH', {title: e.target.value}).then(() => { m.title = e.target.value; })}),
+    m.category && h('span', {class: 'pill'}, m.category), m.profanity && h('span', {class: 'pill warn'}, 'мат'),
+    (m.inserts || []).length ? h('span', {class: 'pill'}, 'вставок ' + m.inserts.length) : null,
+    h('span', {class: 'mute', style: 'white-space:nowrap'}, `${(m.end - m.start).toFixed(0)} с`),
+    h('button', {class: 'btn small', title: 'Границы, варианты хука, сообщение чата, картинка, вставки', onclick: () => { mom = i; openModal('moment'); }}, 'Изменить'));
+  const moments = h('div', {class: 'card'},
+    h('div', {class: 'row', style: 'margin-bottom:10px'}, h('h2', {style: 'margin:0'}, `Моменты (${p.moments.length})`),
+      h('div', {class: 'actions', style: 'flex:none'},
+        h('button', {class: 'btn small', disabled: !p.video, onclick: async () => { const s = +prompt('Начало момента, секунды', '0'); const e = +prompt('Конец момента, секунды', String(s + 30)); if (e > s) { await api(`/api/projects/${p.id}/moments`, 'POST', {start: s, end: e, title: ''}); refresh(true); } }}, '+ Свой момент'))),
     cats.length > 1 && h('div', {class: 'hooks', style: 'margin:0 0 10px'}, ['', ...cats].map(c => h('button', {class: 'btn small' + (c === catFilter ? ' primary' : ''), onclick: () => { catFilter = c; renderMain(); }}, c || 'все'))),
-    p.moments.length ? p.moments.map((m, i) => (!catFilter || m.category === catFilter) && momentCard(p, m, i)) : h('div', {class: 'mute'}, busy ? 'Идёт анализ…' : 'Моментов нет'),
-    h('button', {class: 'btn small', disabled: !p.video, onclick: async () => { const s = +prompt('Начало момента, секунды', '0'); const e = +prompt('Конец момента, секунды', String(s + 30)); if (e > s) { await api(`/api/projects/${p.id}/moments`, 'POST', {start: s, end: e, title: ''}); refresh(); } }}, '+ Свой момент'));
+    p.moments.length ? p.moments.map((m, i) => (!catFilter || m.category === catFilter) && row(m, i)) : h('div', {class: 'mute'}, busy ? 'Идёт анализ…' : 'Моментов нет'),
+    p.moments.length ? h('div', {class: 'bar', style: 'margin-top:14px;padding-top:14px;border-top:1px solid var(--line)'},
+      h('div', {class: 'field'}, h('label', {}, 'Оформление'), h('div', {class: 'row'}, h('select', {onchange: e => { preset = structuredClone(S.presets.find(x => x.name === e.target.value)); renderMain(); }}, S.presets.map(x => h('option', {value: x.name, selected: x.name === preset.name}, x.name))), h('button', {class: 'btn', style: 'flex:none', onclick: () => openModal('design')}, 'Настроить'))),
+      h('div', {class: 'field', style: 'flex:0 0 190px'}, h('label', {}, 'Стилей на момент'), h('select', {title: 'Тот же момент дополнительно монтируется в других пресетах', onchange: e => { styleCount = +e.target.value; }}, [1, 2, 3, 4].map(n => h('option', {value: n, selected: n === styleCount}, n === 1 ? 'Один' : n + ' разных')))),
+      h('label', {class: 'check', style: 'margin:0 0 8px', title: 'Каждый ролик получит свою вариацию: положение и стиль текста, камера, скорость, цвет'}, h('input', {type: 'checkbox', checked: varyOn, onchange: e => { varyOn = e.target.checked; }}), 'Разнообразить'),
+      h('button', {class: 'btn', style: 'flex:none', disabled: busy, title: 'Подборка «ТОП N» из отмеченных моментов', onclick: () => openModal('top')}, 'Собрать ТОП'),
+      h('button', {class: 'btn primary', id: 'renderBtn', style: 'flex:none', disabled: busy, onclick: async () => {
+        const list = picked.size ? [...picked] : p.moments.map((_, i) => i);
+        try { await api('/api/render', 'POST', {project: p.id, moments: list, preset, vary: varyOn && list.length > 1, styles: styleCount, common_title: commonTitle}); refresh(true); } catch (e) { alert(e.message); } }}, 'Смонтировать все')) : null);
 
   const editor = h('div', {class: 'card'}, h('h2', {}, 'Оформление'),
     h('div', {class: 'row', style: 'margin-bottom:10px'},
@@ -657,26 +700,26 @@ function renderMain() {
     h('div', {class: 'preview'}, h('img', {id: 'pvimg', hidden: true, alt: 'Кадр ролика'}), h('div', {class: 'hint', id: 'pvhint'}, p.moments.length ? 'Загружаю кадр…' : 'Появится, когда найдутся моменты')),
     h('div', {class: 'field', style: 'margin-top:8px'}, h('label', {}, 'Момент ролика'), h('input', {type: 'range', min: 0, max: 0.98, step: 0.02, value: at, oninput: e => { at = +e.target.value; queuePreview(); }})),
     h('div', {class: 'field'}, h('label', {}, 'Одна надпись для всех роликов (необязательно)'), h('input', {type: 'text', value: commonTitle, placeholder: 'Пусто — у каждого ролика свой хук', oninput: e => { commonTitle = e.target.value; }})),
-    h('label', {class: 'check', title: 'Каждый ролик получит свою вариацию: положение и стиль текста, камера, скорость, цвет'}, h('input', {type: 'checkbox', checked: varyOn, onchange: e => { varyOn = e.target.checked; }}), 'Разнообразить ролики'),
-    h('div', {class: 'field'}, h('label', {}, 'Стилей на каждый момент'), h('select', {title: 'Тот же момент дополнительно монтируется в других пресетах', onchange: e => { styleCount = +e.target.value; }}, [1, 2, 3, 4].map(n => h('option', {value: n, selected: n === styleCount}, n === 1 ? 'Один (выбранный пресет)' : n + ' разных стиля')))),
-    h('button', {class: 'btn primary', id: 'renderBtn', style: 'width:100%', disabled: busy || !p.moments.length, onclick: async () => {
-      const list = picked.size ? [...picked] : p.moments.map((_, i) => i);
-      try { await api('/api/render', 'POST', {project: p.id, moments: list, preset, vary: varyOn && list.length > 1, styles: styleCount, common_title: commonTitle}); refresh(); } catch (e) { alert(e.message); } }}, 'Смонтировать все'),
     h('button', {class: 'btn', style: 'width:100%;margin-top:8px', disabled: busy || !p.moments.length, title: 'Создать проект CapCut с этим моментом, хуком и субтитрами', onclick: async () => {
       try { const r = await (await api('/api/capcut', 'POST', {project: p.id, moment: mom, preset})).json();
         alert(r.capcut_found ? 'Черновик создан — откройте CapCut, он появится в списке проектов.' : 'CapCut на этом компьютере не найден. Черновик сохранён в папку:\n' + r.path); } catch (e) { alert(e.message); } }}, 'Открыть момент в CapCut'));
 
-  const clips = h('div', {class: 'card'}, h('h2', {}, `Готовые ролики (${(p.clips || []).length})`),
+  const clipUrl = c => `/clips/${p.id}/${encodeURIComponent(c.file)}`;
+  const clips = h('div', {},
+    h('div', {class: 'row', style: 'margin-bottom:12px'}, h('h2', {style: 'margin:0'}, `Готовые ролики (${(p.clips || []).length})`),
+      (p.clips || []).length > 1 ? h('a', {class: 'btn small', style: 'flex:none;text-decoration:none', href: `/api/projects/${p.id}/zip`}, 'Скачать все архивом') : null),
     (p.clips || []).length ? h('div', {class: 'clips'}, p.clips.map(c => h('div', {class: 'clip'},
-      h('video', {src: `/clips/${p.id}/${encodeURIComponent(c.file)}`, controls: true, preload: 'metadata'}),
-      h('b', {title: c.title}, c.title || 'Без названия'),
-      h('div', {class: 'mute'}, '★' + c.score, ' · ', c.preset, c.profanity ? ' · мат' : ''),
-      c.check && h('div', {}, h('span', {class: 'pill ' + (c.check.percent >= 60 ? 'good' : c.check.percent >= 30 ? 'warn' : 'bad')}, `уникальность ${c.check.percent}%`), ' ', h('span', {class: 'mute'}, c.check.verdict)),
-      h('div', {class: 'row', style: 'margin-top:6px'},
-        h('button', {class: 'btn small', onclick: async e => { e.target.disabled = true; try { await api(`/api/check/${p.id}/${encodeURIComponent(c.file)}`, 'POST'); } catch (er) { alert(er.message); } refresh(); }}, 'Проверить'),
-        h('a', {class: 'btn small', href: `/clips/${p.id}/${encodeURIComponent(c.file)}`, download: c.file, style: 'text-align:center;text-decoration:none'}, 'Скачать'),
-        h('button', {class: 'btn small', title: 'Поставить в расписание публикаций для аккаунтов этого стримера', onclick: async () => { try { const r = await (await api('/api/queue', 'POST', {project: p.id, files: [c.file]})).json(); alert(r.added ? `Добавлено в расписание: ${r.added}. Смотрите вкладку «Публикация».` : 'Этот ролик уже стоит в расписании у всех аккаунтов.'); refresh(true); } catch (er) { alert(er.message); } }}, 'В очередь'),
-        h('button', {class: 'btn small', onclick: async () => { if (confirm('Удалить ролик с диска?')) { await api(`/api/clips/${p.id}/${encodeURIComponent(c.file)}`, 'DELETE'); refresh(); } }}, 'Удалить'))))) : h('div', {class: 'mute'}, 'Пока нет — выберите моменты и нажмите «Смонтировать».'));
+      h('video', {src: clipUrl(c), controls: true, preload: 'metadata'}),
+      c.score ? h('span', {class: 'badge2'}, '★' + c.score) : null,
+      h('div', {class: 'body'},
+        h('b', {title: c.title}, c.title || 'Без названия'),
+        h('div', {class: 'mute'}, c.preset, c.profanity ? ' · мат' : ''),
+        c.check && h('div', {style: 'margin-top:4px'}, h('span', {class: 'pill ' + (c.check.percent >= 60 ? 'good' : c.check.percent >= 30 ? 'warn' : 'bad'), title: c.check.verdict}, `уникальность ${c.check.percent}%`)),
+        h('a', {class: 'btn primary', href: clipUrl(c), download: c.file, style: 'display:block;text-align:center;text-decoration:none;margin-top:8px'}, 'Скачать'),
+        h('div', {class: 'row', style: 'margin-top:6px'},
+          h('button', {class: 'btn small', title: 'Поставить в расписание публикаций', onclick: async () => { try { const r = await (await api('/api/queue', 'POST', {project: p.id, files: [c.file]})).json(); alert(r.added ? `Добавлено в расписание: ${r.added}` : 'Уже стоит в расписании у всех аккаунтов'); refresh(true); } catch (er) { alert(er.message); } }}, 'В очередь'),
+          h('button', {class: 'btn small', title: 'Насколько ролик отличается от исходника', onclick: async e => { e.target.disabled = true; try { await api(`/api/check/${p.id}/${encodeURIComponent(c.file)}`, 'POST'); } catch (er) { alert(er.message); } refresh(true); }}, 'Проверить'),
+          h('button', {class: 'btn small', 'aria-label': 'Удалить ролик', title: 'Удалить ролик с диска', onclick: async () => { if (confirm('Удалить ролик с диска?')) { await api(`/api/clips/${p.id}/${encodeURIComponent(c.file)}`, 'DELETE'); refresh(true); } }}, '×')))))) : h('div', {class: 'card mute'}, busy ? 'Ролики появятся здесь, как только смонтируются.' : 'Роликов пока нет — отметьте моменты ниже и нажмите «Смонтировать».'));
 
   const photos = ((S.assets[p.streamer] || {}).photos || []);
   let topTitle, topPhoto;
@@ -686,7 +729,14 @@ function renderMain() {
       topTitle = h('input', {type: 'text', placeholder: 'Заголовок, например: Топ 5 смешных моментов в GTA', value: p.topTitle || '', oninput: e => { p.topTitle = e.target.value; }}),
       topPhoto = h('select', {style: 'flex:0 0 200px', title: 'Фото внизу кадра — из материалов стримера'}, h('option', {value: ''}, photos.length ? 'Без фото' : 'Фото: загрузите в «Материалы»'), photos.map(n => h('option', {value: n}, n))),
       h('button', {class: 'btn primary', style: 'flex:none', disabled: busy, onclick: async () => { try { await api('/api/top', 'POST', {project: p.id, moments: [...picked], title: topTitle.value, preset, photo: topPhoto.value}); refresh(true); } catch (e) { alert(e.message); } }}, 'Собрать топ')));
-  main.replaceChildren(head, steps, status, h('div', {class: 'work'}, moments, editor, pv), top, clips);
+  main.replaceChildren(head, steps, status, clips, moments);
+  const dlg = $('#modal');
+  if (modal && (modal !== 'moment' || p.moments[mom])) {
+    $('#modalTitle').textContent = {design: 'Оформление роликов', moment: 'Момент', top: 'Подборка «ТОП N»'}[modal];
+    dlg.classList.toggle('narrow', modal !== 'design');
+    $('#modalBody').replaceChildren(...(modal === 'design' ? [h('div', {class: 'design'}, editor, pv)] : modal === 'moment' ? [momentCard(p, p.moments[mom], mom)] : [top]));
+    if (!dlg.open) dlg.showModal();
+  } else if (dlg.open) closeModal();
   updateRenderBtn(); queuePreview();
 }
 
@@ -705,9 +755,13 @@ async function refresh(force) {
   if (!$('#picker').options.length) $('#picker').append(...['auto', ...S.pickers].map(k => h('option', {value: k}, PICKERS[k] || k)));
   if (!cur || !S.projects[cur]) cur = Object.values(S.projects).sort((a, b) => b.created - a.created)[0]?.id || null;
   const sig = JSON.stringify([S.projects, S.presets.map(p => p.name), cur, S.assets, S.references, S.watch, S.accounts, S.fetching, S.themes, S.theme_status, S.queue, S.story_status, Object.values(S.streamers).map(x => ({...x, last_check: 0}))]);
-  if (force || sig !== lastSig && !document.activeElement.matches('main input, main select, main textarea')) { lastSig = sig; renderAll(); }
+  if (force || sig !== lastSig && !document.activeElement.matches('main input, main select, main textarea, dialog input, dialog select, dialog textarea')) { lastSig = sig; renderAll(); }
 }
-$('#openNew').onclick = () => $('#newSource').showModal();
+$('#modalClose').onclick = closeModal; $('#modal').addEventListener('close', () => { modal = null; });
+const seg = (el, items, get, set) => { const draw = () => el.replaceChildren(...items.map(([label, val]) => h('button', {type: 'button', class: JSON.stringify(get()) === JSON.stringify(val) ? 'on' : '', onclick: () => { set(val); draw(); }}, label))); draw(); };
+seg($('#segCount'), [['5', 5], ['10', 10], ['20', 20], ['30', 30]], () => +$('#count').value, v => { $('#count').value = v; });
+seg($('#segLen'), [['15–30 с', [15, 30]], ['20–45 с', [20, 45]], ['30–60 с', [30, 60]], ['30–90 с', [30, 90]]], () => [+$('#min').value, +$('#max').value], v => { $('#min').value = v[0]; $('#max').value = v[1]; });
+$('#openNew').onclick = () => { $('#autoPreset').replaceChildren(h('option', {value: ''}, 'Только найти моменты — оформлю сам'), ...S.presets.map(x => h('option', {value: x.name, selected: x.name === 'center'}, 'Сразу смонтировать: ' + x.name))); $('#newSource').showModal(); };
 $('#closeNew').onclick = () => $('#newSource').close();
 $('#add').onclick = async () => {
   const btn = $('#add'); btn.disabled = true;
@@ -715,7 +769,7 @@ $('#add').onclick = async () => {
     let source = $('#src').value.trim(); const f = $('#file').files[0];
     if (f) { btn.textContent = 'Загружаю файл…'; source = (await (await fetch('/api/upload?name=' + encodeURIComponent(f.name), {method: 'PUT', body: f})).json()).path; }
     if (!source) throw new Error('Укажите ссылку, путь или выберите файл');
-    const r = await (await api('/api/projects', 'POST', {source, picker: $('#picker').value, count: +$('#count').value, min: +$('#min').value, max: +$('#max').value, whisper: $('#whisper').value, filler: $('#filler').value, streamer: $('#streamer').value, focus: $('#focus').value})).json();
+    const r = await (await api('/api/projects', 'POST', {source, picker: $('#picker').value, count: +$('#count').value, min: +$('#min').value, max: +$('#max').value, whisper: $('#whisper').value, filler: $('#filler').value, streamer: $('#streamer').value, focus: $('#focus').value, auto_preset: $('#autoPreset').value})).json();
     cur = r.id; mom = 0; picked = new Set(); view = 'Проект'; $('#src').value = ''; $('#file').value = ''; $('#newSource').close(); await refresh(true);
   } catch (e) { alert(e.message); }
   btn.disabled = false; btn.textContent = 'Найти моменты';

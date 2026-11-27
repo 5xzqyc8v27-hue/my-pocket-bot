@@ -330,6 +330,11 @@ const TABS = {
     ['watermark', 'Ник поверх кадра', 'text'],
     ['watermark_y', 'Ник: положение по высоте', 'range', [0.05, 0.97, 0.01]],
     ['banner', 'Баннер или водяной знак (путь к png)', 'text'],
+    ['ad_break', 'Рекламная пауза: ролик замирает, идёт баннер, потом продолжение', 'adbreak'],
+    ['ad_break_at', 'Пауза: место в ролике (0.5 — посередине)', 'range', [0.2, 0.8, 0.01]],
+    ['ad_break_y', 'Пауза: положение баннера по высоте', 'range', [0.1, 0.9, 0.01]],
+    ['ad_break_scale', 'Пауза: ширина баннера', 'range', [0.4, 1, 0.01]],
+    ['ad_break_len', 'Пауза: секунд для баннера-картинки', 'range', [2, 10, 0.5]],
     ['banner_y', 'Баннер: положение по высоте', 'range', [0.05, 0.95, 0.01]],
     ['banner_width', 'Баннер: ширина', 'range', [0.1, 1, 0.01]],
   ],
@@ -361,6 +366,7 @@ function control([key, label, type, opt]) {
   else if (type === 'range') { input = h('input', {type: 'range', min: opt[0], max: opt[1], step: opt[2], value: v, oninput: e => { out.textContent = e.target.value; setP(key, +e.target.value); }}); }
   else if (type === 'color') { const SW = ['FFFFFF', 'FFE600', 'FFD400', '3DDC4A', '35D0FF', 'FF3DD4', 'A970FF', 'FF5A5A', '000000'];
     input = h('div', {class: 'swatches'}, SW.map(c => h('button', {class: 'swatch' + (c === v ? ' on' : ''), style: 'background:#' + c, title: '#' + c, 'aria-label': 'Цвет ' + c, onclick: () => { setP(key, c); renderMain(); }})), h('input', {type: 'color', value: '#' + v, title: 'Свой цвет', style: 'width:34px;height:26px', oninput: e => setP(key, e.target.value.slice(1).toUpperCase())})); }
+  else if (type === 'adbreak') { const list = []; for (const o of new Set([(S.projects[cur] || {}).streamer || 'common', 'common'])) for (const f of ((S.assets[o] || {}).banners || [])) list.push(`${o}/banners/${f}`); input = h('select', {onchange: e => setP(key, e.target.value)}, [h('option', {value: '', selected: !v}, list.length ? 'Без рекламной паузы' : 'Нет — загрузите баннер в «Материалы» → «Баннеры»'), ...[...new Set([v, ...list].filter(Boolean))].map(f => h('option', {value: f, selected: f === v}, f.split('/').pop()))]); }
   else if (type === 'lut') { const luts = []; for (const o of new Set([(S.projects[cur] || {}).streamer || 'common', 'common'])) for (const f of ((S.assets[o] || {}).luts || [])) luts.push(`${o}/luts/${f}`); input = h('select', {onchange: e => setP(key, e.target.value)}, [h('option', {value: '', selected: !v}, luts.length ? 'Без цветокора' : 'Нет — загрузите .cube в «Материалы»'), ...[...new Set([v, ...luts].filter(Boolean))].map(f => h('option', {value: f, selected: f === v}, f.split('/').pop().replace(/\.cube$/i, '')))]); }
   else if (type === 'font') { input = h('select', {onchange: e => setP(key, e.target.value)}, [...new Set([v, ...FONTS])].map(f => h('option', {value: f, selected: f === v}, f))); }
   else { input = h('input', {type: 'text', value: v || '', onchange: e => setP(key, e.target.value.trim() || (['banner', 'title_glow'].includes(key) ? null : ''))}); }
@@ -538,10 +544,11 @@ function rulesBlock(st) {
   const text = (key, label, ph) => h('div', {class: 'field'}, h('label', {}, label), h('input', {type: 'text', value: st[key] || '', placeholder: ph, onchange: e => patch({[key]: e.target.value})}));
   const flag = (key, label) => h('label', {class: 'check'}, h('input', {type: 'checkbox', checked: !!st[key], onchange: e => patch({[key]: e.target.checked})}), label);
   return h('div', {class: 'stage', style: 'margin-top:12px'},
-    h('h3', {}, 'Правила конкурса', h('button', {class: 'btn small', title: 'Подставить правила конкурса нарезок Злого', onclick: async () => patch(await (await api('/api/rules/zloy')).json())}, 'Заполнить правилами Злого')),
+    h('h3', {}, 'Правила конкурса', h('button', {class: 'btn small', title: 'Подставить правила конкурса нарезок Злого', onclick: async () => patch(await (await api('/api/rules/zloy')).json())}, 'Заполнить правилами Злого'), h('button', {class: 'btn small', title: 'Оффер UPG под нарезки Kalatay, уровень 1: вебка 0.7 $ и банер 0.2 $ за 1000 просмотров', onclick: async () => patch(await (await api('/api/rules/upg1')).json())}, 'Оффер UPG · Level 1'), h('button', {class: 'btn small', title: 'Оффер UPG, уровень 2: вебка 1 $ и банер 0.3 $ за 1000 просмотров', onclick: async () => patch(await (await api('/api/rules/upg2')).json())}, 'Оффер UPG · Level 2')),
     h('div', {class: 'row'}, text('rule_link', 'Обязательная ссылка в подписи', 'например: twitch: ZLOYn'),
       h('div', {class: 'field', style: 'flex:0 0 190px'}, h('label', {}, 'Срок приёма, дней'), h('input', {type: 'number', min: 0, value: st.rule_days || 0, onchange: e => patch({rule_days: +e.target.value})}))),
     text('rule_tiers', 'Пороги выплат — просмотры:нарезка $:мем-видео $', '100000:25:7.5, 500000:115:20'),
+    h('div', {class: 'row'}, text('rule_rates', 'Оплата за просмотры — формат:$ за 1000:минимум просмотров', 'вебка:0.7:6000, банер:0.2:10000'), text('rule_ad_len', 'Длина ролика с баннером, секунд', '15-60')),
     text('rule_avoid', 'За что могут не заплатить (такие моменты помечаются, но не отбрасываются)', 'политика, запрещённые вещества…'),
     flag('rule_no_split', 'Предупреждать про сплит: лицо стримера + отвлекающее видео'), flag('rule_no_ads', 'Предупреждать про баннеры и рекламу в ролике'),
     h('div', {class: 'mute'}, 'Правила — подсказки: панель делает ролик так, как вы просили, и только предупреждает. Сама она дописывает лишь обязательную ссылку в подпись.'));

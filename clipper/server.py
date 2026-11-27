@@ -258,6 +258,14 @@ def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False,
                 notes.append("сплит с отвлекающим видео по правилам этого стримера могут не принять")
             if rule.get("rule_no_ads") and preset.banner:
                 notes.append("баннер в ролике по правилам этого стримера может считаться рекламой")
+            if preset.ad_break and rule.get("rule_ad_len"):
+                from .media import probe
+                banner = resolve_asset(preset.ad_break)
+                extra = (preset.ad_break_len if banner.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
+                         else probe(banner)["duration"]) if banner.is_file() else 0
+                note = rules.ad_len_note(m.duration / preset.speed + preset.teaser + extra, rule["rule_ad_len"])
+                if note:
+                    notes.append(note)
             if m.risk:
                 notes.append(f"момент задевает тему, за которую могут не заплатить: {m.risk}")
             if notes:
@@ -269,7 +277,7 @@ def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False,
                 p.setdefault("clips", []).insert(0, {
                     "file": name, "title": m.title, "caption": m.caption, "hashtags": m.hashtags,
                     "score": m.score, "profanity": m.profanity,
-                    "preset": preset.name + (" · вариация" if varied else ""),
+                    "preset": preset.name + (" · вариация" if varied else ""), "ad_break": bool(preset.ad_break),
                     "start": m.start, "end": m.end, "speed": preset.speed, "created": time.time()})
         set_status(p, "ready", f"Смонтировано роликов: {len(indexes)}")
     except Exception as exc:
@@ -582,6 +590,8 @@ class StreamerReq(BaseModel):
     rule_avoid: str = ""      # темы, за которые не платят
     rule_days: int = 0        # сколько дней принимаются ролики (0 — без срока)
     rule_tiers: str = ""      # пороги выплат «просмотры:нарезка$:мем$» через запятую
+    rule_rates: str = ""      # оплата за просмотры «формат:$ за 1000:минимум просмотров» через запятую
+    rule_ad_len: str = ""     # допустимая длина ролика с баннером, секунд: «15-60»
 
 
 def process_chunk(st: dict, chunk: Path) -> int:
@@ -950,7 +960,11 @@ def queue_view() -> dict:
     for qid, q in state["queue"].items():
         row = dict(q)
         rule = rules_of(state["projects"].get(q["project"], {}))
-        if q["status"] == "published" and rule.get("rule_tiers"):
+        if q["status"] == "published" and rule.get("rule_rates"):
+            clips = state["projects"].get(q["project"], {}).get("clips", [])
+            banner = any(c["file"] == q["file"] and c.get("ad_break") for c in clips)
+            row["payout"] = rules.payout_rate(int(q.get("views") or 0), rule["rule_rates"], banner)
+        elif q["status"] == "published" and rule.get("rule_tiers"):
             row["payout"] = rules.payout(int(q.get("views") or 0), q.get("published_at", time.time()),
                                          rule["rule_tiers"], int(rule.get("rule_days") or 0), bool(q.get("meme")))
         out[qid] = row
@@ -977,9 +991,11 @@ def refresh_views(qid: str):
     return {"views": views}
 
 
-@app.get("/api/rules/zloy")
-def zloy_rules():
-    return rules.ZLOY
+@app.get("/api/rules/{name}")
+def rule_template(name: str):
+    if name not in rules.TEMPLATES:
+        raise HTTPException(404, "Такого шаблона правил нет")
+    return rules.TEMPLATES[name]
 
 
 @app.get("/api/blotato/accounts")

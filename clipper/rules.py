@@ -18,6 +18,57 @@ ZLOY = {
 }
 
 
+_UPG = {
+    "rule_link": "", "rule_no_split": False, "rule_no_ads": False, "rule_days": 0, "rule_tiers": "",
+    "rule_avoid": "контент не Олега Калатая (исключение — Гамос и Вамос на проекте Inkmate)",
+    "rule_ad_len": "15-60",  # ролик с баннером: от 15 секунд до минуты, баннер посередине, видео на паузе
+}
+# оффер UPG под нарезки Kalatay: формат:$ за 1000 просмотров:минимум просмотров для выплаты
+UPG_L1 = {**_UPG, "rule_rates": "вебка:0.7:6000, банер:0.2:10000"}
+UPG_L2 = {**_UPG, "rule_rates": "вебка:1:6000, банер:0.3:10000"}
+TEMPLATES = {"zloy": ZLOY, "upg1": UPG_L1, "upg2": UPG_L2}
+
+
+def parse_rates(text: str) -> dict[str, tuple[float, int]]:
+    out = {}
+    for part in (text or "").split(","):
+        bits = [b.strip() for b in part.split(":")]
+        try:
+            out[bits[0].lower()] = (float(bits[1]), int(bits[2]) if len(bits) > 2 else 0)
+        except (ValueError, IndexError):
+            continue
+    return out
+
+
+def payout_rate(views: int, rates_text: str, banner: bool) -> dict:
+    """Оплата за просмотры: ставка за 1000 и минимальный порог, отдельно для роликов с баннером и без."""
+    rates = parse_rates(rates_text)
+    if not rates:
+        return {"amount": 0, "advice": "Ставки не заданы"}
+    names = list(rates)
+    pick = next((n for n in names if ("бан" in n or "ban" in n) == banner), names[0])
+    rate, floor = rates[pick]
+    amount = round(views / 1000 * rate, 2)
+    if views < floor:
+        return {"amount": 0, "format": pick, "next": floor, "level": "",
+                "advice": f"формат «{pick}»: до порога {floor} просмотров ролик не оплачивается, осталось {floor - views}"}
+    return {"amount": amount, "format": pick, "level": "good",
+            "advice": f"формат «{pick}»: {rate:g} $ за 1000 просмотров — можно подавать на выплату"}
+
+
+def ad_len_note(total: float, limits: str) -> str:
+    """Предупреждение, если ролик с баннером не укладывается в длину из правил («15-60»)."""
+    try:
+        low, high = (float(x) for x in limits.split("-"))
+    except ValueError:
+        return ""
+    if total < low:
+        return f"ролик с баннером короче {low:g} с ({total:.0f} с) — по правилам оффера могут не принять"
+    if total > high:
+        return f"ролик с баннером длиннее {high:g} с ({total:.0f} с) — по правилам оффера могут не принять"
+    return ""
+
+
 def parse_tiers(text: str) -> list[tuple[int, float, float]]:
     out = []
     for part in (text or "").split(","):

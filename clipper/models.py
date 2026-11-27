@@ -139,6 +139,12 @@ class Preset(BaseModel):
     lut: str = ""  # цветокор: файл .cube из материалов («владелец/luts/имя») или путь
     lut_strength: float = 1.0
     transition: str = "none"  # подборки: none — встык, fade — мягкое затемнение между кусками
+    # рекламная пауза: ролик замирает, поверх проигрывается баннер, потом ролик продолжается
+    ad_break: str = ""  # видео или картинка баннера: «владелец/banners/имя» или путь
+    ad_break_at: float = 0.5  # в какой доле ролика ставить (0.5 — посередине)
+    ad_break_y: float = 0.6
+    ad_break_scale: float = 0.94  # ширина баннера в долях кадра
+    ad_break_len: float = 4.0  # сколько секунд показывать баннер-картинку
     border: int = 0
     border_color: str = "FFFFFF"
     chat_nick_color: str = "A970FF"

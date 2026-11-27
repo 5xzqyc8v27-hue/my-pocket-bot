@@ -254,6 +254,18 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
                 resolve=None, fonts: list[Path] | None = None) -> Path:
     """Вырезает момент и монтирует его в вертикальный ролик."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if preset.ad_break:
+        banner = Path(resolve(preset.ad_break)) if resolve else Path(preset.ad_break)
+        plain = preset.model_copy(update={"ad_break": ""})
+        if not banner.is_file():
+            return render_clip(source, moment, plain, out_path, transcript, filler, resolve, fonts)
+        with tempfile.TemporaryDirectory() as tmp:
+            body = render_clip(source, moment, plain, Path(tmp) / "body.mp4", transcript, filler, resolve, fonts)
+            pauses = []
+            if transcript and preset.teaser <= 0:  # пауза ставится между словами, а не посреди слова
+                pauses = [(w.end - moment.start) / preset.speed for w in transcript.words_between(moment.start, moment.end)]
+            add_ad_break(body, banner, preset, out_path, pauses)
+        return out_path
     if preset.teaser > 0:  # тизер: самое громкое место ролика ставим в первую секунду
         from .moments import loud_peaks
         peaks = loud_peaks(source, moment.start, moment.duration, count=1)
@@ -321,6 +333,41 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
                 "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out_path.resolve())]
         run(cmd, cwd=Path(tmp))  # cwd = tmp, чтобы не экранировать путь к субтитрам
     return out_path
+
+
+def add_ad_break(clip: Path, banner: Path, preset: Preset, out_path: Path, pauses: list[float] | None = None) -> float:
+    """Рекламная пауза: ролик замирает на кадре, поверх идёт баннер со своим звуком, затем ролик продолжается.
+
+    Возвращает секунду, на которой встал баннер."""
+    from .media import probe
+    total = probe(clip)["duration"]
+    image = banner.suffix.lower() in IMAGE_EXT
+    length = preset.ad_break_len if image else min(probe(banner)["duration"], 15.0)
+    at = total * max(0.1, min(0.9, preset.ad_break_at))
+    near = [t for t in (pauses or []) if abs(t - at) <= 1.5 and 1.0 < t < total - 1.0]
+    if near:
+        at = min(near, key=lambda t: abs(t - at))
+    W, H = preset.width, preset.height
+    key = "" if image else screen_key(banner)
+    chroma = f",chromakey=0x{key}:0.16:0.08" if key else ""
+    sound = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(clip)]
+    cmd += ["-loop", "1", "-t", f"{length:.3f}", "-i", str(banner)] if image else ["-t", f"{length:.3f}", "-i", str(banner)]
+    fc = [f"[0:v]trim=0:{at:.3f},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={length:.3f}[a]",
+          f"[1:v]scale={int(W * preset.ad_break_scale) // 2 * 2}:-2,format=rgba{chroma},setpts=PTS-STARTPTS+{at:.3f}/TB[bn]",
+          f"[a][bn]overlay=(W-w)/2:H*{preset.ad_break_y}-h/2:enable='gte(t,{at:.3f})':eof_action=pass[a2]",
+          f"[0:v]trim=start={at:.3f},setpts=PTS-STARTPTS[b]",
+          f"[a2][b]concat=n=2:v=1:a=0,fps={preset.fps},format=yuv420p[vo]"]
+    maps = ["-map", "[vo]"]
+    if has_audio(clip):
+        mid = (f"[1:a]atrim=0:{length:.3f},apad=whole_dur={length:.3f},{sound}[ab]" if not image and has_audio(banner)
+               else f"anullsrc=r=48000:cl=stereo,atrim=0:{length:.3f}[ab]")
+        fc += [f"[0:a]atrim=0:{at:.3f},asetpts=PTS-STARTPTS,{sound}[aa]", mid,
+               f"[0:a]atrim=start={at:.3f},asetpts=PTS-STARTPTS,{sound}[ac]", "[aa][ab][ac]concat=n=3:v=0:a=1[ao]"]
+        maps += ["-map", "[ao]", "-c:a", "aac", "-b:a", "160k"]
+    run(cmd + ["-filter_complex", ";".join(fc)] + maps + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                                                           "-movflags", "+faststart", str(out_path.resolve())])
+    return at
 
 
 def render_frame(source: Path, moment: Moment, preset: Preset, out_path: Path,

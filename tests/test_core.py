@@ -245,3 +245,15 @@ def test_calm_preset_and_fade_join(tmp_path):
         comp.run = old
     graph = seen["cmd"][seen["cmd"].index("-filter_complex") + 1]
     assert graph.count("xfade") == 2 and "offset=9.550" in graph and "offset=17.100" in graph
+
+
+def test_upg_offer_rates_and_ad_break_fields():
+    from clipper import rules
+    from clipper.models import Preset
+    low = rules.payout_rate(5000, rules.UPG_L1["rule_rates"], banner=False)
+    assert low["amount"] == 0 and low["next"] == 6000
+    assert rules.payout_rate(100000, rules.UPG_L1["rule_rates"], banner=False)["amount"] == 70.0
+    assert rules.payout_rate(100000, rules.UPG_L2["rule_rates"], banner=True)["amount"] == 30.0
+    assert rules.payout_rate(9999, rules.UPG_L2["rule_rates"], banner=True)["amount"] == 0
+    assert rules.ad_len_note(30, "15-60") == "" and rules.ad_len_note(10, "15-60") and rules.ad_len_note(61, "15-60")
+    assert Preset(name="t").ad_break == "" and Preset(name="t").ad_break_at == 0.5

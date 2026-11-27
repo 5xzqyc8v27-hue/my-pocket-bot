@@ -145,6 +145,50 @@ dialog#modal.narrow{width:min(620px,96vw)}
 .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
 .bar .field{margin:0;flex:1;min-width:150px}
 .actions{display:flex;gap:8px;flex-wrap:wrap}
+/* --- оформление 3: система по образцу Linear (awesome-design-md) + правила движения (design-motion-principles) --- */
+:root{--bg:#08090b;--panel:#101216;--panel2:#16191f;--panel3:#1d2128;--line:#23272f;--line2:#2f343d;
+--text:#f7f8f8;--text2:#d0d6e0;--mute:#8a8f98;--faint:#62666d;--accent:#b8f04a;--accent-hi:#cdf77a;
+--ease:cubic-bezier(.2,.8,.2,1);--r:12px}
+body{font-family:Inter,"SF Pro Text","SF Pro Display",-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;font-size:14px;line-height:1.5;color:var(--text);background:var(--bg)}
+h1{font-size:20px;font-weight:600;letter-spacing:-.4px;line-height:1.2}
+main>div:first-child h1{font-size:24px;letter-spacing:-.6px}
+h2{font-size:12px;font-weight:500;letter-spacing:.4px;color:var(--mute)}
+aside{background:var(--panel);border-right:1px solid var(--line)}
+.card,.stage,.clip,.mrow,.moment,.proj,.asset,dialog,.toast{border-color:var(--line)}
+.card{background:var(--panel);border-radius:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+.stage,.mrow,.clip,.moment,.asset{background:var(--panel2)}
+.mute,.field label,.kv span:first-child{color:var(--mute)}
+.btn{border-radius:8px;padding:7px 14px;font-weight:500;background:var(--panel2);border-color:var(--line);transition:background .14s var(--ease),border-color .14s var(--ease),color .14s var(--ease)}
+.btn:hover{background:var(--panel3);border-color:var(--line2)}
+.btn.small{padding:4px 10px;border-radius:6px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.btn.primary:hover{background:var(--accent-hi);border-color:var(--accent-hi)}
+.btn:active{transform:translateY(1px)}
+input[type=text],input[type=number],select,textarea{background:var(--panel2);border-color:var(--line);border-radius:8px;padding:8px 12px;transition:border-color .14s var(--ease)}
+input[type=text]:hover,input[type=number]:hover,select:hover,textarea:hover{border-color:var(--line2)}
+input:focus,select:focus,textarea:focus,button:focus-visible,a:focus-visible{outline:2px solid rgba(184,240,74,.5);outline-offset:1px}
+.pill{border-radius:9999px;border-color:var(--line2);color:var(--text2);font-size:11px;padding:1px 9px}
+.tab{border-radius:8px;transition:background .14s var(--ease),color .14s var(--ease)}
+.tab:hover{color:var(--text)}
+nav button{border-radius:0 8px 8px 0;transition:background .14s var(--ease),color .14s var(--ease)}
+.seg{border-radius:8px;border-color:var(--line);background:var(--panel2)}
+.seg button{transition:background .14s var(--ease),color .14s var(--ease)}
+.seg button:hover{color:var(--text)}
+.status{background:var(--panel);border-color:var(--line);border-radius:10px}
+.step{border-color:var(--line)}
+.clip{border-radius:12px}.mrow{border-radius:10px}
+.moment:hover,.proj:hover,.mrow:hover{border-color:var(--line2)}
+.tile b{font-size:28px;font-weight:600;letter-spacing:-.8px}
+.score{letter-spacing:-.2px}
+dialog{border-radius:16px;background:var(--panel);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+dialog[open]{animation:dlg .16s var(--ease)}
+dialog[open]::backdrop{animation:fade .16s var(--ease)}
+.toast{animation:toast .18s var(--ease);background:var(--panel3)}
+#main{animation:fade .14s var(--ease)}
+@keyframes dlg{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes toast{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style>
 </head>
 <body>

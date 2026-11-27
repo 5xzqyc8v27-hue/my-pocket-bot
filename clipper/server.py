@@ -18,7 +18,8 @@ from pydantic import BaseModel
 
 from .analysis import detect_scenes, uniqueness
 from .capcut import default_drafts_dir, export_draft
-from .chat import find_read_messages, load_chat
+from . import history, llm
+from .chat import chat_spikes, find_read_messages, load_chat
 from .compile import find_themes, render_compilation
 from .media import fetch, probe
 from . import trends
@@ -124,9 +125,11 @@ def transcript_of(p: dict) -> Transcript | None:
     return Transcript.load(path) if path.exists() else None
 
 
-def filler_of(p: dict, preset: Preset | None = None) -> Path | None:
-    """Залипалка для сплита; для раскладки «чат» — случайное фото стримера из материалов."""
+def filler_of(p: dict, preset: Preset | None = None, moment: Moment | None = None) -> Path | None:
+    """Залипалка для сплита; для раскладки «чат» — картинка момента или случайное фото стримера."""
     if preset and preset.layout == "chat":
+        if moment and moment.image and resolve_asset(moment.image).exists():
+            return resolve_asset(moment.image)
         for owner in (p.get("streamer") or "common", "common"):
             photos = sorted((ASSETS / owner / "photos").glob("*")) if (ASSETS / owner / "photos").is_dir() else []
             if photos:
@@ -162,14 +165,29 @@ def analyze_job(pid: str, opts: dict) -> None:
         set_status(p, "moments", "Ищу сильные моменты…")
         moments, used = pick(video, tr, opts["picker"], opts["count"], opts["min"], opts["max"],
                              log=lambda msg: set_status(p, "moments", msg), focus=opts.get("focus", ""))
+        if not video.with_suffix(".chat.jsonl").exists() and "twitch.tv/videos" in p["source"]:
+            set_status(p, "moments", "Скачиваю чат трансляции…")
+            try:
+                history.fetch_vod_chat(p["source"], video)
+            except Exception:
+                traceback.print_exc()
         chat = load_chat(video.with_suffix(".chat.jsonl"))
         if chat and tr and tr.segments:  # моменты, где стример прочитал сообщение из чата и ответил
             moments = [*moments, *find_read_messages(tr, chat)]
+        if chat:  # и места, где чат резко оживился
+            spikes = [m for m in chat_spikes(chat, info["duration"])
+                      if not any(m.start < x.end and x.start < m.end for x in moments)]
+            moments = [*moments, *spikes]
         with lock:
             p["picker"] = used
             p["chat_messages"] = len(chat)
             p["moments"] = [m.model_dump() for m in sorted(moments, key=lambda m: -m.score)]
         set_status(p, "ready", f"Найдено моментов: {len(moments)}")
+        if opts.get("auto_preset"):  # сразу монтируем сильные моменты в выбранном формате
+            good = [i for i, m in enumerate(p["moments"])
+                    if m["score"] >= opts.get("auto_min_score", 60) and m.get("category") != "чат"]
+            if good:
+                render_job(pid, good, Preset.load(opts["auto_preset"], PRESETS), varied=len(good) > 1)
     except Exception as exc:
         traceback.print_exc()
         set_status(p, "error", str(exc)[:500])
@@ -192,7 +210,7 @@ def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False,
             preset = vary(chosen, seed=int(time.time() * 1000) + n) if (varied or chosen is not base) else chosen
             set_status(p, "render", f"Монтирую {n} из {len(indexes)}: {m.title or 'без названия'}")
             name = f"{int(m.start):05d}_{slug(m.title)}_{preset.name}_{uuid.uuid4().hex[:4]}.mp4"
-            render_clip(video, m, preset, out_dir / name, tr, filler_of(p, preset), resolve=resolve_asset)
+            render_clip(video, m, preset, out_dir / name, tr, filler_of(p, preset, m), resolve=resolve_asset)
             with lock:
                 p.setdefault("clips", []).insert(0, {
                     "file": name, "title": m.title, "caption": m.caption, "hashtags": m.hashtags,
@@ -218,9 +236,12 @@ class NewProject(BaseModel):
     filler: str = ""
     streamer: str = ""
     focus: str = ""
+    auto_preset: str = ""  # если задан — сильные моменты сразу монтируются в этом пресете
+    auto_min_score: int = 60
 
 
 class MomentPatch(BaseModel):
+    image: str | None = None
     chat_user: str | None = None
     chat_text: str | None = None
     title: str | None = None
@@ -360,7 +381,7 @@ def preview(req: PreviewReq):
     m = Moment.model_validate(p["moments"][req.moment])
     out = DATA / "preview" / f"{req.project}.jpg"
     try:
-        render_frame(Path(p["video"]), m, req.preset, out, transcript_of(p), filler_of(p, req.preset), req.at)
+        render_frame(Path(p["video"]), m, req.preset, out, transcript_of(p), filler_of(p, req.preset, m), req.at)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)[-400:])
     return FileResponse(out, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
@@ -814,6 +835,60 @@ def auto_inserts(pid: str, i: int):
         m["inserts"] = [x.model_dump() for x in made]
     save_state()
     return m
+
+
+IDEA_SYSTEM = """Ты придумываешь смешную картинку-иллюстрацию для мемной нарезки стримера.
+Формат ролика: сверху стример читает сообщение из чата и отвечает, снизу — нелепая картинка,
+где стример изображён в образе по теме сообщения (например, сообщение про пряники — стример
+в виде пряничного человечка; про школу — стример-директор за столом).
+Образ должен быть добрым и абсурдным, без унижения, эротики и насилия.
+Ответь двумя строками: первая — идея по-русски одной фразой, вторая — готовый запрос для
+генератора картинок на английском (вертикальный кадр, фотореализм, лицо берётся с приложенного фото)."""
+
+
+@app.post("/api/projects/{pid}/moments/{i}/idea")
+def image_idea(pid: str, i: int):
+    """Идея картинки под момент — её потом генерируют в своём генераторе и загружают в материалы."""
+    p = project(pid)
+    if not 0 <= i < len(p["moments"]):
+        raise HTTPException(404, "Момент не найден")
+    m = p["moments"][i]
+    tr = transcript_of(p)
+    said = " ".join(w.text for w in tr.words_between(m["start"], m["end"])) if tr else ""
+    try:
+        idea = llm.ask(f"Сообщение из чата: {m.get('chat_text') or '—'}\nЧто говорит стример: {said or m.get('title', '')}",
+                       IDEA_SYSTEM, 600)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+    with lock:
+        m["image_idea"] = idea
+    save_state()
+    return m
+
+
+# ---------- история трансляций ----------
+
+history_cache: dict = {}
+
+
+@app.get("/api/streamers/{sid}/history")
+def streamer_history(sid: str, refresh: bool = False):
+    st = state["streamers"].get(sid)
+    if not st:
+        raise HTTPException(404, "Стример не найден")
+    if st["platform"] not in ("twitch",):
+        raise HTTPException(400, "История трансляций пока доступна только для Twitch")
+    cached = history_cache.get(sid)
+    if cached and not refresh and time.time() - cached["at"] < 1800:
+        return cached["items"]
+    try:
+        items = history.list_vods(st["platform"], st["channel"])
+    except FileNotFoundError:
+        raise HTTPException(400, "yt-dlp не установлен (pip install yt-dlp)")
+    except Exception as exc:
+        raise HTTPException(400, str(exc)[:300])
+    history_cache[sid] = {"at": time.time(), "items": items}
+    return items
 
 
 # ---------- материалы по ссылке ----------

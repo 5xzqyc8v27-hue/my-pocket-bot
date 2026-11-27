@@ -79,6 +79,8 @@ class Moment(BaseModel):
     inserts: list[Insert] = Field(default_factory=list)
     chat_user: str = ""  # ник автора сообщения из чата (для раскладки «чат + реакция»)
     chat_text: str = ""
+    image: str = ""  # своя картинка момента (материал «владелец/тип/имя») — низ кадра в раскладке «чат»
+    image_idea: str = ""  # идея картинки под этот момент
 
     @property
     def duration(self) -> float:

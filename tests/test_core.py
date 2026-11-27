@@ -72,3 +72,15 @@ def test_chat_parse_and_read_detection():
     found = find_read_messages(tr, chat)
     assert len(found) == 1 and found[0].chat_user == "a774kl"
     assert 39 <= found[0].start <= 40 and found[0].end >= 49
+
+
+def test_chat_spikes_and_rechat_parse():
+    from clipper.chat import chat_spikes
+    from clipper.history import parse_rechat
+    chat = [{"t": float(t), "user": "u", "text": "ок"} for t in range(0, 600, 10)]
+    chat += [{"t": 300 + i * 0.2, "user": "u", "text": "АХАХАХ что это было"} for i in range(40)]
+    spikes = chat_spikes(chat, 600)
+    assert len(spikes) == 1 and spikes[0].start == 280 and spikes[0].category == "всплеск чата"
+    raw = {"comments": [{"content_offset_seconds": 12.5, "commenter": {"display_name": "Vasya"},
+                         "message": {"body": "привет"}}, {"broken": 1}]}
+    assert parse_rechat(raw) == [{"t": 12.5, "user": "Vasya", "text": "привет"}]

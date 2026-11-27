@@ -127,3 +127,28 @@ def find_read_messages(tr: Transcript, chat: list[dict], window: float = 90.0, m
         if not any(m.start < k.end and k.start < m.end for k in kept):
             kept.append(m)
     return kept
+
+
+def chat_spikes(chat: list[dict], duration: float, count: int = 5, window: float = 15.0) -> list[Moment]:
+    """Моменты, где чат резко оживился: событие обычно случилось за 10-20 секунд до всплеска."""
+    if len(chat) < 30 or duration < 60:
+        return []
+    bins = [0] * (int(duration // window) + 1)
+    for m in chat:
+        if 0 <= m["t"] <= duration:
+            bins[int(m["t"] // window)] += 1
+    typical = sorted(bins)[len(bins) // 2] or 1
+    found: list[Moment] = []
+    for idx in sorted(range(len(bins)), key=lambda i: -bins[i]):
+        ratio = bins[idx] / typical
+        if ratio < 3 or len(found) >= count:
+            break
+        start, end = max(0.0, idx * window - 20), min(duration, idx * window + window)
+        if any(start < f.end and f.start < end for f in found):
+            continue
+        sample = next((m["text"] for m in chat if idx * window <= m["t"] < (idx + 1) * window and len(m["text"]) > 3), "")
+        found.append(Moment(start=round(start, 1), end=round(end, 1), title="", category="всплеск чата",
+                            score=min(95, int(50 + ratio * 6)),
+                            reason=f"Чат оживился в {ratio:.0f} раз сильнее обычного ({bins[idx]} сообщений за {window:.0f} с)"
+                                   + (f". Пишут: «{sample[:60]}»" if sample else "")))
+    return sorted(found, key=lambda m: m.start)

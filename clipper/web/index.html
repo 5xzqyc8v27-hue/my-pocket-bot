@@ -184,7 +184,7 @@ const SUB_STYLES = {
   'По слову': {subtitle_color: 'FFE600', subtitle_highlight: 'FFFFFF', subtitle_upper: true, subtitle_words: 1, subtitle_size: 100},
   'Спокойные': {subtitle_color: 'E8EAED', subtitle_highlight: 'FF8AD8', subtitle_upper: false, subtitle_words: 4, subtitle_size: 58},
 };
-let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''}, themeStreamer = '', themeMusic = '', styleCount = 1;
+let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''}, themeStreamer = '', themeMusic = '', styleCount = 1, hist = {}, histPick = {}, histOpt = {preset: 'reaction', focus: '', count: 8};
 let view = 'Проект', owner = 'common', kind = 'photos';
 let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: [], themes: {}, theme_status: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
 
@@ -242,7 +242,17 @@ function momentCard(p, m, i) {
     h('div', {class: 'row', style: 'margin-top:6px'},
       h('input', {type: 'text', value: m.chat_user || '', placeholder: 'Ник из чата', style: 'flex:0 0 110px', onchange: e => save({chat_user: e.target.value})}),
       h('input', {type: 'text', value: m.chat_text || '', placeholder: 'Сообщение из чата — для раскладки «Чат + реакция»', onchange: e => save({chat_text: e.target.value})})),
+    pictureRow(p, m, i, save),
     insertsRow(p, m, i));
+}
+function pictureRow(p, m, i, save) {
+  const imgs = [];
+  for (const o of new Set([p.streamer || 'common', 'common'])) for (const k of ['photos', 'memes']) for (const f of ((S.assets[o] || {})[k] || [])) if (/\.(png|jpe?g|webp)$/i.test(f)) imgs.push(`${o}/${k}/${f}`);
+  return h('div', {style: 'margin-top:6px'},
+    h('div', {class: 'row'},
+      h('select', {title: 'Картинка внизу кадра в раскладке «Чат + реакция»', onchange: e => save({image: e.target.value})}, h('option', {value: ''}, imgs.length ? 'Картинка: случайное фото стримера' : 'Картинка: загрузите в «Материалы»'), imgs.map(r => h('option', {value: r, selected: r === m.image}, r.split('/').slice(1).join('/')))),
+      h('button', {class: 'btn small', style: 'flex:none', title: 'Claude придумает смешной образ под этот момент и запрос для генератора картинок', onclick: async e => { e.target.disabled = true; e.target.textContent = 'Думаю…'; try { await api(`/api/projects/${p.id}/moments/${i}/idea`, 'POST'); } catch (er) { alert(er.message); } refresh(true); }}, 'Идея картинки')),
+    m.image_idea && h('div', {class: 'mute', style: 'margin-top:6px;white-space:pre-wrap;user-select:all'}, m.image_idea));
 }
 function insertsRow(p, m, i) {
   const list = m.inserts || [], refs = [];
@@ -335,7 +345,28 @@ function streamerCard(st) {
       h('div', {class: 'stage'}, h('h3', {}, '4 · Очистка', toggle('delete_chunks', 'Удалять записанный кусок эфира сразу после монтажа')),
         h('div', {style: 'margin-bottom:6px'}, h('span', {class: 'pill ' + (st.delete_chunks ? 'good' : '')}, st.delete_chunks ? 'удаляет куски после монтажа' : 'выключена')),
         kv('свободно на диске', S.disk_free_gb + ' ГБ'), h('div', {class: 'mute', style: 'margin-top:6px'}, 'Удаляются только исходные записи эфира. Готовые ролики не трогаются.'))),
+    st.platform === 'twitch' ? historyBlock(st) : null,
     projects.length ? h('div', {style: 'margin-top:12px'}, h('h2', {}, 'Куски эфира'), h('div', {class: 'hooks'}, projects.sort((a, b) => b.created - a.created).slice(0, 12).map(p => h('button', {class: 'btn small', onclick: () => { cur = p.id; mom = 0; picked = new Set(); view = 'Проект'; renderAll(); }}, p.title, ' · ', (p.clips || []).length, ' рол.')))) : null);
+}
+function historyBlock(st) {
+  const items = hist[st.id], pick = histPick[st.id] || (histPick[st.id] = new Set());
+  const load = async force => { try { hist[st.id] = await (await api(`/api/streamers/${st.id}/history` + (force ? '?refresh=true' : ''))).json(); } catch (e) { alert(e.message); hist[st.id] = undefined; } renderMain(); };
+  const dur = d => d ? `${Math.floor(d / 3600)} ч ${Math.floor(d % 3600 / 60)} мин` : '—';
+  if (!items) return h('div', {style: 'margin-top:12px'}, h('button', {class: 'btn small', onclick: e => { e.target.textContent = 'Загружаю…'; load(false); }}, 'Показать историю трансляций'));
+  return h('div', {style: 'margin-top:12px'}, h('h2', {}, 'История трансляций'),
+    h('div', {class: 'row', style: 'margin-bottom:8px'},
+      h('div', {class: 'field', style: 'margin:0'}, h('label', {}, 'Формат (пресет)'), h('select', {onchange: e => { histOpt.preset = e.target.value; }}, h('option', {value: ''}, 'Только найти моменты'), S.presets.map(x => h('option', {value: x.name, selected: x.name === histOpt.preset}, 'Сразу монтировать: ' + x.name)))),
+      h('div', {class: 'field', style: 'margin:0'}, h('label', {}, 'Что искать'), h('select', {onchange: e => { histOpt.focus = e.target.value; }}, [...$('#focus').options].map(o => h('option', {value: o.value, selected: o.value === histOpt.focus}, o.textContent)))),
+      h('div', {class: 'field', style: 'margin:0;flex:0 0 110px'}, h('label', {}, 'Моментов'), h('input', {type: 'number', min: 1, max: 40, value: histOpt.count, onchange: e => { histOpt.count = +e.target.value; }})),
+      h('button', {class: 'btn primary', style: 'flex:none;align-self:end', onclick: async () => {
+        if (!pick.size) return alert('Отметьте трансляции галочками');
+        if (!confirm(`Скачать и обработать трансляций: ${pick.size}? Длинные эфиры занимают несколько гигабайт каждый.`)) return;
+        for (const url of pick) await api('/api/projects', 'POST', {source: url, streamer: st.id, picker: 'auto', count: histOpt.count, min: 15, max: 60, focus: histOpt.focus, auto_preset: histOpt.preset});
+        pick.clear(); view = 'Проект'; refresh(true); }}, 'В монтаж'),
+      h('button', {class: 'btn', style: 'flex:none;align-self:end', onclick: () => load(true)}, 'Обновить')),
+    items.length ? items.map(v => h('label', {class: 'kv', style: 'padding:4px 0;cursor:pointer'},
+      h('span', {style: 'color:var(--text)'}, h('input', {type: 'checkbox', checked: pick.has(v.url), onchange: e => { e.target.checked ? pick.add(v.url) : pick.delete(v.url); }}), ' ', v.title || v.id),
+      h('span', {}, `${v.ts ? new Date(v.ts * 1000).toLocaleDateString('ru') : ''} · ${dur(v.duration)} · ${num(v.views)} просм.`))) : h('div', {class: 'mute'}, 'Прошедших трансляций не найдено — возможно, стример не хранит записи.'));
 }
 function renderStreamers() {
   const list = Object.values(S.streamers).sort((a, b) => a.created - b.created);

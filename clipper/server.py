@@ -21,7 +21,7 @@ from .capcut import default_drafts_dir, export_draft
 from .face import apply_face, find_face
 from . import blotato
 from . import health as health_mod
-from . import history, llm
+from . import history, llm, rules
 from . import story as story_mod
 from .schedule import next_slots
 from .chat import chat_spikes, find_read_messages, load_chat
@@ -118,6 +118,11 @@ def project(pid: str) -> dict:
     return p
 
 
+def rules_of(p: dict) -> dict:
+    """Правила конкурса стримера, к которому относится проект (пустой словарь, если правил нет)."""
+    return state["streamers"].get(p.get("streamer") or "", {})
+
+
 def set_status(p: dict, status: str, message: str = "") -> None:
     with lock:
         p["status"], p["message"] = status, message
@@ -176,7 +181,8 @@ def analyze_job(pid: str, opts: dict) -> None:
         p["scenes"] = detect_scenes(video)
         set_status(p, "moments", "Ищу сильные моменты…")
         moments, used = pick(video, tr, opts["picker"], opts["count"], opts["min"], opts["max"],
-                             log=lambda msg: set_status(p, "moments", msg), focus=opts.get("focus", ""))
+                             log=lambda msg: set_status(p, "moments", msg), focus=opts.get("focus", ""),
+                             avoid=rules_of(p).get("rule_avoid", ""))
         if not video.with_suffix(".chat.jsonl").exists() and "twitch.tv/videos" in p["source"]:
             set_status(p, "moments", "Скачиваю чат трансляции…")
             try:
@@ -224,6 +230,13 @@ def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False,
                 m.title = common_title.strip()
             preset = vary(chosen, seed=int(time.time() * 1000) + n) if (varied or chosen is not base) else chosen
             preset = apply_face(preset, p.get("face"))
+            rule = rules_of(p)
+            if rule.get("rule_no_split") and preset.layout == "split":  # правила стримера запрещают отвлекающее видео
+                preset = preset.model_copy(update={"layout": "reaction"})
+                p["warning"] = "Сплит с залипалкой запрещён правилами этого стримера — смонтировано в «Вебка + игра»"
+            if rule.get("rule_no_ads") and preset.banner:
+                preset = preset.model_copy(update={"banner": None})
+                p["warning"] = "Баннер убран: правила этого стримера запрещают рекламу в роликах"
             set_status(p, "render", f"Монтирую {n} из {len(indexes)}: {m.title or 'без названия'}")
             name = f"{int(m.start):05d}_{slug(m.title)}_{preset.name}_{uuid.uuid4().hex[:4]}.mp4"
             render_clip(video, m, preset, out_dir / name, tr, filler_of(p, preset, m), resolve=resolve_asset)
@@ -296,7 +309,7 @@ def get_state():
                 "assets": list_assets(), "kinds": KINDS, "streamers": state["streamers"],
                 "disk_free_gb": round(shutil.disk_usage(DATA).free / 1e9, 1),
                 "watch": state["watch"], "accounts": state["accounts"], "profile": PROFILE,
-                "themes": state["themes"], "theme_status": theme_status, "queue": state["queue"],
+                "themes": state["themes"], "theme_status": theme_status, "queue": queue_view(),
                 "story_status": story_status, "blotato": blotato.enabled(), "mac_voice": story_mod.platform.system() == "Darwin",
                 "edge_voices": story_mod.EDGE_VOICES if shutil.which("edge-tts") else {},
                 "fetching": sorted(fetching)}
@@ -527,6 +540,13 @@ class StreamerReq(BaseModel):
     chunk_minutes: float = 10
     delete_chunks: bool = False
     whisper: str = "small"
+    # правила конкурса стримера
+    rule_link: str = ""       # обязательная ссылка в подписи, например «twitch: ZLOYn»
+    rule_no_split: bool = False  # запрещён сплит с отвлекающим видео
+    rule_no_ads: bool = False    # запрещены баннеры и реклама в ролике
+    rule_avoid: str = ""      # темы, за которые не платят
+    rule_days: int = 0        # сколько дней принимаются ролики (0 — без срока)
+    rule_tiers: str = ""      # пороги выплат «просмотры:нарезка$:мем$» через запятую
 
 
 def process_chunk(st: dict, chunk: Path) -> int:
@@ -822,6 +842,9 @@ class QueuePatch(BaseModel):
     status: str | None = None  # scheduled, published, skipped
     shift_hours: float | None = None
     caption: str | None = None
+    url: str | None = None
+    views: int | None = None
+    meme: bool | None = None
 
 
 @app.post("/api/queue")
@@ -845,9 +868,11 @@ def add_to_queue(req: QueueReq):
             for clip, when in zip(fresh, next_slots(taken, len(fresh), req.per_day, req.from_hour, req.to_hour)):
                 qid = uuid.uuid4().hex[:8]
                 tags = " ".join("#" + t.lstrip("#") for t in clip.get("hashtags", []))
+                caption = " ".join(x for x in (clip.get("caption") or clip["title"], tags) if x)
                 state["queue"][qid] = {"id": qid, "project": p["id"], "file": clip["file"], "account": aid,
                                        "title": clip["title"], "when": when, "status": "scheduled",
-                                       "caption": " ".join(x for x in (clip.get("caption") or clip["title"], tags) if x)}
+                                       "meme": "chat" in clip.get("preset", ""), "views": 0, "url": "",
+                                       "caption": rules.with_link(caption, rules_of(p).get("rule_link", ""))}
                 made += 1
     save_state()
     return {"added": made}
@@ -869,6 +894,9 @@ def patch_queue(qid: str, patch: QueuePatch):
             q["status"] = "scheduled"
         if patch.caption is not None:
             q["caption"] = patch.caption
+        for key in ("url", "views", "meme"):
+            if getattr(patch, key) is not None:
+                q[key] = getattr(patch, key)
     save_state()
     return q
 
@@ -879,6 +907,44 @@ def delete_queue(qid: str):
         state["queue"].pop(qid, None)
     save_state()
     return {"ok": True}
+
+
+def queue_view() -> dict:
+    """Очередь с расчётом выплаты для вышедших роликов."""
+    out = {}
+    for qid, q in state["queue"].items():
+        row = dict(q)
+        rule = rules_of(state["projects"].get(q["project"], {}))
+        if q["status"] == "published" and rule.get("rule_tiers"):
+            row["payout"] = rules.payout(int(q.get("views") or 0), q.get("published_at", time.time()),
+                                         rule["rule_tiers"], int(rule.get("rule_days") or 0), bool(q.get("meme")))
+        out[qid] = row
+    return out
+
+
+@app.post("/api/queue/{qid}/views")
+def refresh_views(qid: str):
+    """Подтянуть просмотры вышедшего ролика по его ссылке."""
+    q = state["queue"].get(qid)
+    if not q or not q.get("url"):
+        raise HTTPException(400, "Сначала укажите ссылку на вышедший ролик")
+    try:
+        proc = subprocess.run(["yt-dlp", "--dump-single-json", "--skip-download", "--no-playlist", q["url"]],
+                              capture_output=True, text=True, timeout=120)
+        views = int(json.loads(proc.stdout).get("view_count") or 0)
+    except FileNotFoundError:
+        raise HTTPException(400, "yt-dlp не установлен (pip install yt-dlp)")
+    except Exception:
+        raise HTTPException(400, "Не удалось получить просмотры — впишите число вручную")
+    with lock:
+        q["views"] = views
+    save_state()
+    return {"views": views}
+
+
+@app.get("/api/rules/zloy")
+def zloy_rules():
+    return rules.ZLOY
 
 
 @app.get("/api/blotato/accounts")

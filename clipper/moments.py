@@ -39,8 +39,10 @@ def _format_transcript(tr: Transcript) -> str:
     return "\n".join(f"[{s.start:.1f}-{s.end:.1f}] {s.text}" for s in tr.segments)
 
 
-def _prompt(tr: Transcript, count: int, min_len: float, max_len: float, focus: str = "") -> str:
+def _prompt(tr: Transcript, count: int, min_len: float, max_len: float, focus: str = "", avoid: str = "") -> str:
     want = f"Особенно ищи моменты такого типа: {focus}.\n" if focus.strip() else ""
+    if avoid.strip():
+        want += f"Не бери моменты, где есть: {avoid}. За такие ролики не платят.\n"
     return want + (
         f"Нужно до {count} моментов длиной от {min_len:.0f} до {max_len:.0f} секунд.\n"
         f"Длительность видео: {tr.duration:.0f} с.\n\nРасшифровка:\n{_format_transcript(tr)}"
@@ -69,14 +71,14 @@ def claude_cli_available() -> bool:
     return shutil.which("claude") is not None
 
 
-def pick_with_claude_cli(tr: Transcript, count: int, min_len: float, max_len: float, focus: str = "") -> list[Moment]:
+def pick_with_claude_cli(tr: Transcript, count: int, min_len: float, max_len: float, focus: str = "", avoid: str = "") -> list[Moment]:
     """Выбор моментов через установленный Claude Code (`claude -p`).
 
     Работает от подписки Claude (Pro/Max), API-кредиты не тратит.
     Нужно один раз войти: запустить `claude` и выполнить /login.
     """
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}  # иначе спишет с API
-    prompt = SYSTEM + "\n\n" + _prompt(tr, count, min_len, max_len, focus) + JSON_RULE
+    prompt = SYSTEM + "\n\n" + _prompt(tr, count, min_len, max_len, focus, avoid) + JSON_RULE
     try:
         proc = subprocess.run(["claude", "-p", "--output-format", "json"], input=prompt,
                               capture_output=True, text=True, timeout=900, env=env)
@@ -109,13 +111,13 @@ def ollama_available() -> bool:
 
 
 def pick_with_ollama(tr: Transcript, count: int, min_len: float, max_len: float,
-                     model: str = OLLAMA_MODEL, focus: str = "") -> list[Moment]:
+                     model: str = OLLAMA_MODEL, focus: str = "", avoid: str = "") -> list[Moment]:
     """Выбор моментов локальной нейросетью через Ollama — бесплатно и без интернета."""
     body = json.dumps({
         "model": model, "stream": False, "format": _Picked.model_json_schema(),
         "options": {"num_ctx": 32768},
         "messages": [{"role": "system", "content": SYSTEM},
-                     {"role": "user", "content": _prompt(tr, count, min_len, max_len, focus) + JSON_RULE}],
+                     {"role": "user", "content": _prompt(tr, count, min_len, max_len, focus, avoid) + JSON_RULE}],
     }).encode()
     req = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=body,
                                  headers={"Content-Type": "application/json"})
@@ -144,12 +146,12 @@ def available_pickers() -> list[str]:
 
 
 def pick_with_claude(tr: Transcript, count: int, min_len: float, max_len: float,
-                     model: str = DEFAULT_MODEL, focus: str = "") -> list[Moment]:
+                     model: str = DEFAULT_MODEL, focus: str = "", avoid: str = "") -> list[Moment]:
     """Выбор моментов через Claude API. Нужен ANTHROPIC_API_KEY (или `ant auth login`)."""
     import anthropic
 
     client = anthropic.Anthropic()
-    prompt = _prompt(tr, count, min_len, max_len, focus)
+    prompt = _prompt(tr, count, min_len, max_len, focus, avoid)
     response = client.messages.parse(
         model=model,
         max_tokens=16000,
@@ -254,7 +256,7 @@ def _clean(moments: list[Moment], duration: float, min_len: float, max_len: floa
 
 
 def pick(video: Path, tr: Transcript | None, picker: str, count: int, min_len: float,
-         max_len: float, log=print, focus: str = "") -> tuple[list[Moment], str]:
+         max_len: float, log=print, focus: str = "", avoid: str = "") -> tuple[list[Moment], str]:
     """Выбирает моменты указанным способом; в режиме auto перебирает доступные по очереди."""
     has_text = bool(tr and tr.segments)
     chain = [p for p in available_pickers() if has_text or p == "heuristic"] if picker == "auto" else [picker]
@@ -266,7 +268,7 @@ def pick(video: Path, tr: Transcript | None, picker: str, count: int, min_len: f
         if not has_text:
             raise RuntimeError(f"Для «{name}» нужна расшифровка речи")
         try:
-            return llm[name](tr, count, min_len, max_len, focus=focus), name
+            return llm[name](tr, count, min_len, max_len, focus=focus, avoid=avoid), name
         except Exception as exc:  # любой сбой нейросети — пробуем следующий способ
             log(f"  {name} не сработал: {exc}")
             if name == chain[-1]:

@@ -460,6 +460,18 @@ function streamerStages(st) {
         h('div', {style: 'margin-bottom:6px'}, h('span', {class: 'pill ' + (st.delete_chunks ? 'good' : '')}, st.delete_chunks ? 'удаляет куски после монтажа' : 'выключена')),
         kv('свободно на диске', S.disk_free_gb + ' ГБ'), h('div', {class: 'mute', style: 'margin-top:6px'}, 'Удаляются только исходные записи эфира. Готовые ролики не трогаются.')));
 }
+function rulesBlock(st) {
+  const patch = body => api('/api/streamers/' + st.id, 'PATCH', body).then(() => refresh(true)).then(drawCustom).catch(e => alert(e.message));
+  const text = (key, label, ph) => h('div', {class: 'field'}, h('label', {}, label), h('input', {type: 'text', value: st[key] || '', placeholder: ph, onchange: e => patch({[key]: e.target.value})}));
+  const flag = (key, label) => h('label', {class: 'check'}, h('input', {type: 'checkbox', checked: !!st[key], onchange: e => patch({[key]: e.target.checked})}), label);
+  return h('div', {class: 'stage', style: 'margin-top:12px'},
+    h('h3', {}, 'Правила конкурса', h('button', {class: 'btn small', title: 'Подставить правила конкурса нарезок Злого', onclick: async () => patch(await (await api('/api/rules/zloy')).json())}, 'Заполнить правилами Злого')),
+    h('div', {class: 'row'}, text('rule_link', 'Обязательная ссылка в подписи', 'например: twitch: ZLOYn'),
+      h('div', {class: 'field', style: 'flex:0 0 190px'}, h('label', {}, 'Срок приёма, дней'), h('input', {type: 'number', min: 0, value: st.rule_days || 0, onchange: e => patch({rule_days: +e.target.value})}))),
+    text('rule_tiers', 'Пороги выплат — просмотры:нарезка $:мем-видео $', '100000:25:7.5, 500000:115:20'),
+    text('rule_avoid', 'За что не платят (эти темы не попадут в моменты)', 'политика, запрещённые вещества…'),
+    flag('rule_no_split', 'Запрещён сплит: лицо стримера + отвлекающее видео'), flag('rule_no_ads', 'Запрещены баннеры и реклама в ролике'));
+}
 function streamerCard(st) {
   const projects = Object.values(S.projects).filter(p => p.streamer === st.id);
   const clips = projects.reduce((n, p) => n + (p.clips || []).length, 0);
@@ -475,7 +487,7 @@ function streamerCard(st) {
           h('span', {class: 'pill'}, 'роликов ' + clips), h('span', {class: 'pill'}, 'кусков ' + (st.chunks_done || 0)),
           st.last_clip ? h('span', {class: 'pill'}, 'последний ролик ' + ago(st.last_clip)) : null)),
       h('div', {class: 'actions', style: 'flex:none'},
-        h('button', {class: 'btn small', onclick: () => openCustom('Настройки: ' + st.name, () => streamerStages(live()), true)}, 'Настройки'),
+        h('button', {class: 'btn small', onclick: () => openCustom('Настройки: ' + st.name, () => [streamerStages(live()), rulesBlock(live())], true)}, 'Настройки'),
         st.platform === 'twitch' ? h('button', {class: 'btn small', onclick: () => openCustom('История трансляций: ' + st.name, () => historyBlock(live()), true)}, 'История') : null,
         h('button', {class: 'btn small', onclick: () => api(`/api/streamers/${st.id}/check`, 'POST').then(() => { toast('Проверяю эфир ' + st.name + '…'); setTimeout(() => refresh(true), 2500); })}, 'Проверить эфир'),
         h('button', {class: 'btn small', 'aria-label': 'Удалить стримера', onclick: async () => { if (confirm('Удалить стримера ' + st.name + '? Записи и ролики останутся на диске.')) { await api('/api/streamers/' + st.id, 'DELETE'); refresh(true); } }}, '×'))),
@@ -635,7 +647,14 @@ function renderQueue() {
             q.status !== 'published' && h('button', {class: 'btn small primary', onclick: () => patch(q.id, {status: 'published'})}, 'Выложено'), ' ',
             q.status !== 'published' && h('button', {class: 'btn small', onclick: () => patch(q.id, {shift_hours: 24})}, 'На день позже'), ' ',
             h('button', {class: 'btn small', onclick: () => api('/api/queue/' + q.id, 'DELETE').then(() => refresh(true))}, '×'))),
-        h('div', {class: 'mute'}, q.caption), q.message ? h('div', {style: 'color:var(--bad);font-size:12px'}, q.message) : null, q.url ? h('a', {href: q.url, target: '_blank', rel: 'noopener', class: 'mute'}, q.url) : null); }))) : [h('div', {class: 'empty'}, 'Расписание пустое.')]));
+        h('div', {class: 'mute'}, q.caption),
+        q.status === 'published' ? h('div', {class: 'row', style: 'margin-top:6px'},
+          h('input', {type: 'text', value: q.url || '', placeholder: 'Ссылка на вышедший ролик', onchange: e => patch(q.id, {url: e.target.value})}),
+          h('input', {type: 'number', min: 0, value: q.views || 0, title: 'Просмотры', style: 'flex:0 0 130px', onchange: e => patch(q.id, {views: +e.target.value})}),
+          h('button', {class: 'btn small', style: 'flex:none', title: 'Подтянуть просмотры по ссылке', onclick: async e => { e.target.disabled = true; try { await api(`/api/queue/${q.id}/views`, 'POST'); } catch (er) { alert(er.message); } refresh(true); }}, 'Обновить'),
+          h('label', {class: 'check', style: 'flex:none;margin:0', title: 'Мем-видео оплачивается по меньшей ставке'}, h('input', {type: 'checkbox', checked: !!q.meme, onchange: e => patch(q.id, {meme: e.target.checked})}), 'мем-видео')) : null,
+        q.payout ? h('div', {style: 'margin-top:4px;font-size:13px'}, h('span', {class: 'pill ' + (q.payout.level || '')}, q.payout.amount ? `выплата ${q.payout.amount} $` : 'порог не взят'), ' ', q.payout.advice, q.payout.days_left != null ? h('span', {class: 'mute'}, ` · до конца приёма ${q.payout.days_left} дн.`) : null) : null,
+        q.message ? h('div', {style: 'color:var(--bad);font-size:12px'}, q.message) : null, null); }))) : [h('div', {class: 'empty'}, 'Расписание пустое.')]));
 }
 function renderStory() {
   const withVideo = Object.values(S.projects).filter(p => p.video), voices = [], music = [];

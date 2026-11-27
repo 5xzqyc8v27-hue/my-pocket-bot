@@ -176,3 +176,19 @@ def test_find_stutters_catches_self_correction():
              enumerate("своя рабб раборатория грязнуль лаборатория грязнули да".split())]
     kinds = [f["kind"] for f in find_stutters(words, min_gap=0.5)]
     assert "запинка" in kinds and "оговорка" in kinds
+
+
+def test_contest_rules_link_and_payout_advice():
+    from clipper.rules import ZLOY, parse_tiers, payout, with_link
+    assert with_link("Смешной момент #злой", "twitch: ZLOYn") == "Смешной момент #злой twitch: ZLOYn"
+    assert with_link("уже есть Twitch: zloyn", "twitch: ZLOYn") == "уже есть Twitch: zloyn"
+    tiers, now, day = ZLOY["rule_tiers"], 1_800_000_000.0, 86400
+    assert parse_tiers(tiers)[0] == (100000, 25.0, 7.5)
+    fast = payout(150_000, now - 2 * day, tiers, 14, now=now)       # 75 тыс/день -> дойдёт до 500 тыс
+    assert fast["amount"] == 25 and "подождать" in fast["advice"]
+    slow = payout(120_000, now - 10 * day, tiers, 14, now=now)      # 12 тыс/день -> не дойдёт
+    assert "подавайте" in slow["advice"]
+    assert payout(120_000, now - 10 * day, tiers, 14, meme=True, now=now)["amount"] == 7.5
+    assert payout(120_000, now - 13 * day, tiers, 14, now=now)["level"] == "warn"
+    assert payout(50_000, now - 15 * day, tiers, 14, now=now)["level"] == "bad"
+    assert payout(1_200_000, now - 3 * day, tiers, 14, now=now)["amount"] == 225

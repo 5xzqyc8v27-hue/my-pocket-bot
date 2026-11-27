@@ -192,3 +192,18 @@ def test_contest_rules_link_and_payout_advice():
     assert payout(120_000, now - 13 * day, tiers, 14, now=now)["level"] == "warn"
     assert payout(50_000, now - 15 * day, tiers, 14, now=now)["level"] == "bad"
     assert payout(1_200_000, now - 3 * day, tiers, 14, now=now)["amount"] == 225
+
+
+def test_pack_classify_and_names():
+    from clipper.packs import classify, folder_id, target_name
+    assert folder_id("https://drive.google.com/drive/folders/1D6-FTQPwDC4?usp=sharing") == "1D6-FTQPwDC4"
+    assert classify("Мемы/[ATHENS] Cкала удивление.mp4") == "memes"
+    assert classify("Звуки/Вуши/[ATHENS] Базовый вуш 1.mp3") == "sounds"
+    assert classify("Музыка без АП/Фонк/track.mp3") == "music"
+    assert classify("Фоны для монтажа/[ATHENS] фон 2.mp4") == "fillers"
+    assert classify("Шрифты/Bartina Bold.ttf") == "fonts"
+    assert classify("3D Модели/Техника/microphone.glb") is None
+    assert classify("PNG's/Вырезаные буквы/01.png") is None
+    assert classify("Мемы/._скрытый.mp4") is None
+    assert target_name("Звуки/Мемные/[ATHENS] сверчки мем.mp3") == "Мемные_сверчки_мем.mp3"
+    assert target_name("Мемы/[ATHENS] Cкала удивление.mp4") == "Cкала_удивление.mp4"

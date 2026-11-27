@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -46,8 +47,10 @@ def insert_filters(inserts: list, first_input: int, preset: Preset, last: str) -
         idx, W, H = first_input + ins.index, preset.width, preset.height
         size = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}" if ins.place == "full"
                 else f"scale={int(W * ins.scale) // 2 * 2}:-2")
+        # в раскладке с чатом середину кадра занимает сообщение — вставки уходят в нижнюю половину
+        place = "bottom" if preset.layout == "chat" and ins.place in ("center", "top") else ins.place
         parts += [f"[{idx}:v]{size},format=rgba,setpts=PTS-STARTPTS+{ins.at:.3f}/TB[in{n}]",
-                  f"[{last}][in{n}]overlay=(W-w)/2:{PLACE_Y.get(ins.place, PLACE_Y['center'])}"
+                  f"[{last}][in{n}]overlay=(W-w)/2:{PLACE_Y.get(place, PLACE_Y['center'])}"
                   f":enable='between(t,{ins.at:.3f},{ins.at + ins.duration:.3f})':eof_action=pass[vi{n}]"]
         last = f"vi{n}"
     return parts, last
@@ -144,7 +147,8 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
 
 def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcript | None,
              filler: Path | None, tmp: Path, camera: str | None = None,
-             inserts: list | None = None, cam_times: list | None = None) -> list[str]:
+             inserts: list | None = None, cam_times: list | None = None,
+             fonts: list[Path] | None = None) -> list[str]:
     """Общая часть команды ffmpeg для ролика и для кадра предпросмотра."""
     use_filler = bool(filler) and preset.layout in ("split", "chat")
     banner = Path(preset.banner) if preset.banner else None
@@ -159,6 +163,14 @@ def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcrip
         (tmp / ass_name).write_text(
             build_ass(words, moment.start, moment.duration / preset.speed, moment.title, preset, chat),
             encoding="utf-8")
+    if ass_name and fonts:  # шрифты из материалов кладём рядом с субтитрами
+        (tmp / "fonts").mkdir(exist_ok=True)
+        for folder in fonts:
+            if folder.is_dir():
+                for f in folder.iterdir():
+                    if f.suffix.lower() in (".ttf", ".otf"):
+                        shutil.copyfile(f, tmp / "fonts" / f.name)
+        ass_name += ":fontsdir=fonts"
     cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{moment.start:.3f}", "-t", f"{moment.duration:.3f}",
            "-i", str(source.resolve())]
     if use_filler and str(filler).lower().endswith(IMAGE_EXT):
@@ -188,7 +200,7 @@ class _Ins:
 
 def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
                 transcript: Transcript | None = None, filler: Path | None = None,
-                resolve=None) -> Path:
+                resolve=None, fonts: list[Path] | None = None) -> Path:
     """Вырезает момент и монтирует его в вертикальный ролик."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if preset.teaser > 0:  # тизер: самое громкое место ролика ставим в первую секунду
@@ -201,8 +213,8 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
             with tempfile.TemporaryDirectory() as tmp:
                 a, b = Path(tmp) / "a.mp4", Path(tmp) / "b.mp4"
                 render_clip(source, lead, plain.model_copy(update={"camera": "none", "title_anim": False}), a,
-                            transcript, filler)
-                render_clip(source, moment, plain, b, transcript, filler, resolve)
+                            transcript, filler, fonts=fonts)
+                render_clip(source, moment, plain, b, transcript, filler, resolve, fonts)
                 (Path(tmp) / "list.txt").write_text("file 'a.mp4'\nfile 'b.mp4'", encoding="utf-8")
                 run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", "list.txt",
                      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k",
@@ -234,7 +246,7 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
         if path.exists() and 0 <= ins.at < out_len:
             inserts.append(_Ins(str(path.resolve()), ins.at, min(ins.duration, out_len - ins.at), ins.place, ins.scale))
     with tempfile.TemporaryDirectory() as tmp:
-        cmd = _prepare(source, moment, preset, transcript, filler, Path(tmp), camera, inserts, cam_times)
+        cmd = _prepare(source, moment, preset, transcript, filler, Path(tmp), camera, inserts, cam_times, fonts)
         first = 1 + int(bool(filler) and preset.layout in ("split", "chat")) + int(bool(preset.banner and Path(preset.banner).exists()))
         sounds = [i for i in inserts if not i.file.lower().endswith(IMAGE_EXT) and has_audio(Path(i.file))]
         main_audio = has_audio(source)
@@ -262,7 +274,7 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
 
 def render_frame(source: Path, moment: Moment, preset: Preset, out_path: Path,
                  transcript: Transcript | None = None, filler: Path | None = None,
-                 at: float = 0.5) -> Path:
+                 at: float = 0.5, fonts: list[Path] | None = None) -> Path:
     """Один кадр ролика (доля at от длины) — для живого предпросмотра раскладки."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     # Прыгаем сразу к нужному месту исходника, чтобы не декодировать весь отрезок.
@@ -270,7 +282,7 @@ def render_frame(source: Path, moment: Moment, preset: Preset, out_path: Path,
     # Кадр берётся в нулевой момент — анимации появления в нём ещё не видно, отключаем их.
     preset = preset.model_copy(update={"title_anim": False, "subtitle_pop": False})
     with tempfile.TemporaryDirectory() as tmp:
-        cmd = _prepare(source, shifted, preset, transcript, filler, Path(tmp))
+        cmd = _prepare(source, shifted, preset, transcript, filler, Path(tmp), fonts=fonts)
         idx = cmd.index("-filter_complex") + 1
         cmd[idx] = cmd[idx].replace("[out]", "[full]") + ";[full]scale=540:-2[out]"
         cmd += ["-map", "[out]", "-frames:v", "1", "-q:v", "4", str(out_path.resolve())]

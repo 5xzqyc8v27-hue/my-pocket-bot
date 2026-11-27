@@ -21,7 +21,7 @@ from .capcut import default_drafts_dir, export_draft
 from .face import apply_face, find_face
 from . import blotato
 from . import health as health_mod
-from . import history, llm, rules
+from . import history, llm, packs, rules
 from . import story as story_mod
 from .schedule import next_slots
 from .chat import chat_spikes, find_read_messages, load_chat
@@ -116,6 +116,11 @@ def project(pid: str) -> dict:
     if not p:
         raise HTTPException(404, "Проект не найден")
     return p
+
+
+def fonts_of(p: dict) -> list[Path]:
+    """Папки со шрифтами из материалов: стримера проекта и общие."""
+    return [ASSETS / owner / "fonts" for owner in dict.fromkeys([p.get("streamer") or "common", "common"])]
 
 
 def rules_of(p: dict) -> dict:
@@ -242,7 +247,7 @@ def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False,
                 p["warning"] = "Обратите внимание: " + "; ".join(dict.fromkeys(notes))
             set_status(p, "render", f"Монтирую {n} из {len(indexes)}: {m.title or 'без названия'}")
             name = f"{int(m.start):05d}_{slug(m.title)}_{preset.name}_{uuid.uuid4().hex[:4]}.mp4"
-            render_clip(video, m, preset, out_dir / name, tr, filler_of(p, preset, m), resolve=resolve_asset)
+            render_clip(video, m, preset, out_dir / name, tr, filler_of(p, preset, m), resolve=resolve_asset, fonts=fonts_of(p))
             with lock:
                 p.setdefault("clips", []).insert(0, {
                     "file": name, "title": m.title, "caption": m.caption, "hashtags": m.hashtags,
@@ -313,7 +318,7 @@ def get_state():
                 "disk_free_gb": round(shutil.disk_usage(DATA).free / 1e9, 1),
                 "watch": state["watch"], "accounts": state["accounts"], "profile": PROFILE,
                 "themes": state["themes"], "theme_status": theme_status, "queue": queue_view(),
-                "story_status": story_status, "blotato": blotato.enabled(), "mac_voice": story_mod.platform.system() == "Darwin",
+                "story_status": story_status, "blotato": blotato.enabled(), "pack_status": pack_status, "mac_voice": story_mod.platform.system() == "Darwin",
                 "edge_voices": story_mod.EDGE_VOICES if shutil.which("edge-tts") else {},
                 "fetching": sorted(fetching)}
 
@@ -424,7 +429,7 @@ def preview(req: PreviewReq):
     out = DATA / "preview" / f"{req.project}.jpg"
     req.preset = apply_face(req.preset, p.get("face"))
     try:
-        render_frame(Path(p["video"]), m, req.preset, out, transcript_of(p), filler_of(p, req.preset, m), req.at)
+        render_frame(Path(p["video"]), m, req.preset, out, transcript_of(p), filler_of(p, req.preset, m), req.at, fonts_of(p))
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)[-400:])
     return FileResponse(out, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
@@ -489,7 +494,16 @@ def fonts():
     for folder in ("/System/Library/Fonts", "/Library/Fonts", str(Path.home() / "Library/Fonts")):
         if Path(folder).is_dir():
             names |= {f.stem for f in Path(folder).glob("*.[to]tf")}
-    return sorted(n for n in names if n and not n.startswith("."))[:400] or ["Arial", "Helvetica", "Impact"]
+    mine = set()
+    if ASSETS.is_dir():  # шрифты из материалов показываем первыми
+        for f in ASSETS.glob("*/fonts/*.[to]tf"):
+            family = ""
+            if shutil.which("fc-scan"):
+                family = subprocess.run(["fc-scan", "--format", "%{family}", str(f)], capture_output=True,
+                                        text=True).stdout.split(",")[0].strip()
+            mine.add(family or f.stem)
+    system = sorted(n for n in names - mine if n and not n.startswith("."))[:400]
+    return sorted(mine) + (system or ["Arial", "Helvetica", "Impact"])
 
 
 @app.post("/api/presets")
@@ -1332,6 +1346,49 @@ def streamer_clips(sid: str, period: str = "7d"):
         raise HTTPException(400, "yt-dlp не установлен (pip install yt-dlp)")
     except Exception as exc:
         raise HTTPException(400, str(exc)[:300])
+
+
+# ---------- импорт пака с Google Диска ----------
+
+pack_status: dict = {"busy": False, "message": ""}
+
+
+class PackReq(BaseModel):
+    url: str
+    owner: str = "common"
+    kinds: list[str] = ["memes", "sounds", "music", "fonts", "fillers", "emoji"]
+
+
+@app.post("/api/packs/gdrive")
+def import_pack(req: PackReq):
+    """Скачивает общую папку Google Диска и раскладывает файлы по разделам материалов."""
+    if pack_status["busy"]:
+        raise HTTPException(409, "Импорт уже идёт")
+    try:
+        packs.folder_id(req.url)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+    kinds = [k for k in req.kinds if k in packs.KIND_NAMES]
+    if not kinds:
+        raise HTTPException(400, "Выберите, что импортировать")
+
+    def job():
+        try:
+            def progress(n, total, name):
+                pack_status["message"] = f"Скачиваю {n} из {total}: {name}"
+            res = packs.import_pack(req.url, ASSETS, slug(req.owner, "common"), kinds, progress)
+            pack_status["message"] = (f"Готово: скачано {res['downloaded']}, уже было {res['skipped']}"
+                                      + (f", не удалось {res['failed']}" if res["failed"] else ""))
+        except ImportError:
+            pack_status["message"] = "Ошибка: не установлен gdown (pip install gdown)"
+        except Exception as exc:
+            traceback.print_exc()
+            pack_status["message"] = f"Ошибка: {str(exc)[:300]}"
+        pack_status["busy"] = False
+
+    pack_status.update(busy=True, message="Читаю список файлов…")
+    threading.Thread(target=job, daemon=True).start()
+    return {"ok": True}
 
 
 # ---------- материалы по ссылке ----------

@@ -345,7 +345,7 @@ function drawCustom() { if (!modal || typeof modal === 'string') return; const d
 function closeModal() { modal = null; const d = $('#modal'); if (d.open) d.close(); }
 let catFilter = '', varyOn = true, health = null, trendWin = '24h', trendRows = null, trendForm = {kind: 'channel', value: ''}, themeStreamer = '', themeMusic = '', styleCount = 1, hist = {}, histPick = {}, histMode = 'vods', clipRange = '7d', story = {topic: '', script: '', title: '', voice: '', music: '', projects: new Set()}, histOpt = {preset: 'reaction', focus: '', count: 8};
 let view = 'Проект', owner = 'common', kind = 'photos';
-let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: [], themes: {}, theme_status: {}, queue: {}, story_status: {}, blotato: false}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
+let S = {projects: {}, presets: [], pickers: [], assets: {}, kinds: {}, references: {}, streamers: {}, watch: {}, accounts: {}, fetching: [], themes: {}, theme_status: {}, queue: {}, story_status: {}, blotato: false, pack_status: {}}, cur = null, mom = 0, tab = 'Раскладка', preset = null, picked = new Set(), at = 0.5, pvTimer = null, pvSeq = 0;
 
 const getP = k => k.includes('.') ? preset[k.split('.')[0]][+k.split('.')[1]] : preset[k];
 function setP(k, v) { if (k.includes('.')) { const [a, i] = k.split('.'); preset[a][+i] = v; } else preset[k] = v; queuePreview(); }
@@ -461,7 +461,7 @@ function renderAssets() {
   const owners = Object.keys(S.assets); if (!owners.includes(owner)) owners.push(owner);
   const files = (S.assets[owner] || {})[kind] || [];
   const isImg = n => /\.(png|jpe?g|webp|gif)$/i.test(n);
-  let linkIn;
+  let linkIn, packIn;
   $('#main').replaceChildren(
     h('div', {}, h('h1', {}, 'Материалы'), h('div', {class: 'mute'}, 'Свои файлы: общие и отдельно под каждого стримера. Фото идут в топы, шрифты — в титры топов.')),
     h('div', {class: 'card'},
@@ -475,6 +475,10 @@ function renderAssets() {
       h('div', {class: 'field'}, h('label', {}, 'Или скачать по ссылке (YouTube, TikTok и др.) в этот раздел'), h('div', {class: 'row'},
         linkIn = h('input', {type: 'text', placeholder: 'https://…'}),
         h('button', {class: 'btn', style: 'flex:none', onclick: async () => { try { await api(`/api/assets/${encodeURIComponent(owner)}/${kind}/fetch`, 'POST', {url: linkIn.value}); linkIn.value = ''; refresh(true); } catch (e) { alert(e.message); } }}, 'Скачать'))),
+      h('div', {class: 'field'}, h('label', {}, 'Импорт пака с Google Диска — ссылка на общую папку; файлы сами разложатся по разделам'), h('div', {class: 'row'},
+        packIn = h('input', {type: 'text', placeholder: 'https://drive.google.com/drive/folders/…'}),
+        h('button', {class: 'btn', style: 'flex:none', disabled: !!S.pack_status.busy, onclick: async () => { try { await api('/api/packs/gdrive', 'POST', {url: packIn.value, owner}); refresh(true); } catch (e) { alert(e.message); } }}, S.pack_status.busy ? 'Импортирую…' : 'Импортировать пак'))),
+      S.pack_status.message ? h('div', {class: 'mute', style: 'margin-bottom:10px'}, S.pack_status.message) : null,
       S.fetching.length ? h('div', {class: 'mute', style: 'margin-bottom:10px'}, 'Скачивается: ' + S.fetching.join('; ')) : null,
       files.length ? h('div', {class: 'assets'}, files.map(n => h('div', {class: 'asset'},
         isImg(n) && h('img', {src: `/assets/${owner}/${kind}/${encodeURIComponent(n)}`, alt: ''}), n,
@@ -885,7 +889,7 @@ async function refresh(force) {
   if (!preset) preset = structuredClone(S.presets[0] || S.defaults);
   if (!$('#picker').options.length) $('#picker').append(...['auto', ...S.pickers].map(k => h('option', {value: k}, PICKERS[k] || k)));
   if (!cur || !S.projects[cur]) cur = Object.values(S.projects).sort((a, b) => b.created - a.created)[0]?.id || null;
-  const sig = JSON.stringify([S.projects, S.presets.map(p => p.name), cur, S.assets, S.references, S.watch, S.accounts, S.fetching, S.themes, S.theme_status, S.queue, S.story_status, Object.values(S.streamers).map(x => ({...x, last_check: 0}))]);
+  const sig = JSON.stringify([S.projects, S.presets.map(p => p.name), cur, S.assets, S.references, S.watch, S.accounts, S.fetching, S.themes, S.theme_status, S.queue, S.story_status, S.pack_status, Object.values(S.streamers).map(x => ({...x, last_check: 0}))]);
   if (force || sig !== lastSig && !document.activeElement.matches('main input, main select, main textarea, dialog input, dialog select, dialog textarea')) { lastSig = sig; renderAll(); }
 }
 $('#modalClose').onclick = closeModal; $('#modal').addEventListener('close', () => { modal = null; });

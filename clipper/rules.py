@@ -66,6 +66,7 @@ def payout(views: int, published_at: float, tiers_text: str, days: int, meme: bo
     if left is not None and left <= 2:
         return {**info, "advice": "Срок приёма заканчивается — подавайте сейчас", "level": "warn"}
     if will_reach:
-        return {**info, "advice": f"Порог взят, но ролик успевает дорасти до {upcoming[0][0]:,}".replace(",", " ")
-                + " — выгоднее подождать", "level": "good"}
+        goal = f"{upcoming[0][0]:,}".replace(",", " ")
+        return {**info, "advice": f"Порог взят, но ролик успевает дорасти до {goal} — выгоднее подождать",
+                "level": "good"}
     return {**info, "advice": "Порог взят, до следующего не дотянет — подавайте на выплату", "level": "good"}

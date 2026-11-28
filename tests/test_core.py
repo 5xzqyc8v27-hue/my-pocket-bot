@@ -381,3 +381,16 @@ def test_noise_phrases():
     from clipper.transcribe import is_noise
     assert all(is_noise(t) for t in ("[музика]", "*сміх*", "Дякую.", "Дякую за перегляд!", "...", "(оплески)"))
     assert not any(is_noise(t) for t in ("Дякую тобі, брате", "Вибачайся.", "Я камеру відірвав!"))
+
+
+def test_streamer_banner_default(tmp_path, monkeypatch):
+    from clipper import server
+    from clipper.models import Preset
+    banner = tmp_path / "b.mp4"; banner.write_bytes(b"x")
+    monkeypatch.setitem(server.state, "streamers", {"k": {"id": "k", "ad_break": str(banner)}})
+    p = {"streamer": "k"}
+    got = server.streamer_banner(p, Preset(name="t"))
+    assert got.ad_break == str(banner) and got.ad_break_blur == 18
+    own = server.streamer_banner(p, Preset(name="t", ad_break="свой.mp4"))
+    assert own.ad_break == "свой.mp4"
+    assert server.streamer_banner({"streamer": ""}, Preset(name="t")).ad_break == ""

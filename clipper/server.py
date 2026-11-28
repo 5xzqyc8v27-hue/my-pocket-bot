@@ -133,6 +133,31 @@ def rules_of(p: dict) -> dict:
     return state["streamers"].get(p.get("streamer") or "", {})
 
 
+def streamer_banner(p: dict, preset: Preset) -> Preset:
+    """Если у стримера задан баннер, а в оформлении рекламной паузы нет — ставим баннер стримера."""
+    ref = rules_of(p).get("ad_break") or ""
+    if preset.ad_break or not ref or not resolve_asset(ref).is_file():
+        return preset
+    return preset.model_copy(update={"ad_break": ref, "ad_break_blur": preset.ad_break_blur or 18})
+
+
+def banner_into(clip: Path, preset: Preset, pauses: list[float] | None = None) -> bool:
+    """Вставляет рекламную паузу в уже готовый ролик (на месте). False — баннер не задан или не найден."""
+    from .render import add_ad_break
+    banner = resolve_asset(preset.ad_break) if preset.ad_break else None
+    if not banner or not banner.is_file():
+        return False
+    tmp = clip.with_name(clip.stem + "_nobanner.mp4")
+    clip.rename(tmp)
+    try:
+        add_ad_break(tmp, banner, preset, clip, pauses)
+    except Exception:
+        tmp.rename(clip)
+        raise
+    tmp.unlink()
+    return True
+
+
 def set_status(p: dict, status: str, message: str = "") -> None:
     with lock:
         p["status"], p["message"] = status, message
@@ -256,7 +281,7 @@ def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False,
             if common_title.strip():
                 m.title = common_title.strip()
             preset = vary(chosen, seed=int(time.time() * 1000) + n) if (varied or chosen is not base) else chosen
-            preset = apply_face(preset, p.get("face"))
+            preset = streamer_banner(p, apply_face(preset, p.get("face")))
             rule = rules_of(p)  # правила — подсказка: монтируем как просили, но предупреждаем
             notes = []
             if rule.get("rule_no_split") and preset.layout == "split":
@@ -589,6 +614,7 @@ class StreamerReq(BaseModel):
     delete_chunks: bool = False
     whisper: str = "small"
     lang: str = "ru"  # язык речи стримера: ru, uk, en или auto
+    ad_break: str = ""  # баннер, который ставится рекламной паузой во все ролики стримера («владелец/banners/имя»)
     # правила конкурса стримера
     rule_link: str = ""       # обязательная ссылка в подписи, например «twitch: ZLOYn»
     rule_no_split: bool = False  # запрещён сплит с отвлекающим видео
@@ -754,9 +780,13 @@ def top_job(pid: str, req: TopReq) -> None:
         name = f"top_{slug(req.title)}_{uuid.uuid4().hex[:4]}.mp4"
         render_top(Path(p["video"]), moments, req.title, apply_face(req.preset, p.get("face")), DATA / "clips" / pid / name,
                    photo if photo and photo.exists() else None, fonts if fonts.is_dir() else None)
+        banner = streamer_banner(p, req.preset.model_copy(update={"ad_break_y": 0.5}))
+        ordered = moments[::-1]  # играют от последнего места к первому; пауза встаёт между моментами
+        cuts = [sum(m.duration for m in ordered[:k]) for k in range(1, len(ordered))]
+        with_banner = banner_into(DATA / "clips" / pid / name, banner, cuts)
         with lock:
             p.setdefault("clips", []).insert(0, {
-                "file": name, "title": req.title, "caption": "", "hashtags": [], "kind": "top",
+                "file": name, "title": req.title, "caption": "", "hashtags": [], "kind": "top", "ad_break": with_banner,
                 "score": max(m.score for m in moments), "profanity": any(m.profanity for m in moments),
                 "preset": req.preset.name, "start": moments[-1].start, "end": moments[-1].end,
                 "speed": 1.0, "created": time.time()})
@@ -850,9 +880,12 @@ def clips_top_job(pid: str, st: dict, req: ClipsTopReq) -> None:
         fonts = fonts if fonts.is_dir() else ASSETS / "common" / "fonts"
         name = f"top_{slug(title)}_{uuid.uuid4().hex[:4]}.mp4"
         render_top(joined, moments, title, preset, DATA / "clips" / pid / name, None, fonts if fonts.is_dir() else None)
+        ordered = moments[::-1]
+        cuts = [sum(m.duration for m in ordered[:k]) for k in range(1, len(ordered))]
+        with_banner = banner_into(DATA / "clips" / pid / name, streamer_banner(p, preset.model_copy(update={"ad_break_y": 0.5})), cuts)
         with lock:
             p.setdefault("clips", []).insert(0, {
-                "file": name, "title": title, "caption": "", "hashtags": [], "kind": "top", "score": 100,
+                "file": name, "title": title, "caption": "", "hashtags": [], "kind": "top", "score": 100, "ad_break": with_banner,
                 "profanity": False, "preset": preset.name, "start": 0, "end": moments[-1].end, "speed": 1.0,
                 "created": time.time()})
         set_status(p, "ready", f"Топ из {len(moments)} клипов готов")
@@ -1891,6 +1924,29 @@ def uniq_run(cfg: dict):
 
     uniq_status.update(busy=True, stop=False, done=0, total=len(files) * conf["copies"], message="Запускаю…")
     threading.Thread(target=job, daemon=True).start()
+    return {"ok": True}
+
+
+@app.post("/api/banner/{pid}/{name}")
+def clip_banner(pid: str, name: str):
+    """Вставить баннер стримера рекламной паузой в уже готовый ролик."""
+    p = project(pid)
+    clip = next((c for c in p["clips"] if c["file"] == name), None)
+    if not clip:
+        raise HTTPException(404, "Ролик не найден")
+    if clip.get("ad_break"):
+        raise HTTPException(400, "В этом ролике баннер уже есть")
+    preset = streamer_banner(p, Preset(name="banner", ad_break_y=0.45))
+    if not preset.ad_break:
+        raise HTTPException(400, "У стримера не задан баннер — выберите его в настройках стримера")
+    try:
+        banner_into(clip_path(pid, name), preset)
+    except Exception as exc:
+        raise HTTPException(400, f"Не удалось вставить баннер: {str(exc)[:200]}")
+    with lock:
+        clip["ad_break"] = True
+        clip["check"] = None
+    save_state()
     return {"ok": True}
 
 

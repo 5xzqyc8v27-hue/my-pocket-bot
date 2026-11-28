@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from pathlib import Path
 
 from .models import Segment, Transcript, Word
@@ -50,7 +52,8 @@ def transcribe_sherpa(video: Path, model_size: str = "small", language: str | No
     size = model_size if model_size in ("tiny", "base", "small", "medium", "large-v3") else "small"
     encoder, decoder, tokens, vad_path = _sherpa_files(size)
     rec = sherpa_onnx.OfflineRecognizer.from_whisper(encoder=str(encoder), decoder=str(decoder), tokens=str(tokens),
-                                                     language=language or "", task="transcribe", num_threads=4)
+                                                     language=language or "", task="transcribe",
+                                                     num_threads=int(os.environ.get("CLIPPER_STT_THREADS", "4")))
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000",
                           "-f", "f32le", "-"], capture_output=True, check=True).stdout
     audio = np.frombuffer(raw, dtype=np.float32)

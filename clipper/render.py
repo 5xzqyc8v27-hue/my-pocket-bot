@@ -317,7 +317,12 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
                 a, b = Path(tmp) / "a.mp4", Path(tmp) / "b.mp4"
                 render_clip(source, lead, plain.model_copy(update={"camera": "none", "title_anim": False}), a,
                             transcript, filler, fonts=fonts)
-                render_clip(source, moment, plain, b, transcript, filler, resolve, fonts)
+                body = plain
+                if plain.title_seconds > 0:  # надпись держится заданное время от начала ролика, считая тизер
+                    rest = plain.title_seconds - preset.teaser
+                    body = plain.model_copy(update={"title": plain.title and rest > 0.3, "title_seconds": max(rest, 0.0),
+                                                    "title_typed": False, "title_anim": False})
+                render_clip(source, moment, body, b, transcript, filler, resolve, fonts)
                 (Path(tmp) / "list.txt").write_text("file 'a.mp4'\nfile 'b.mp4'", encoding="utf-8")
                 run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", "list.txt",
                      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k",

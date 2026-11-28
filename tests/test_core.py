@@ -367,3 +367,11 @@ def test_dialog_format_pieces():
     assert "crop=1080:1920" in build_filter(p, False, False, None)  # людей не нашли — кадр по центру
     act = np.zeros((2, 50)); act[0, :25] = 2; act[1, 25:] = 2
     assert [who for _, _, who in timeline(act)] == [0, 1]
+
+
+def test_zip_draft(tmp_path):
+    import zipfile
+    from clipper.capcut import zip_draft
+    d = tmp_path / "Проект"; d.mkdir(); (d / "draft_content.json").write_text("{}"); (d / "video.mp4").write_bytes(b"x")
+    z = zip_draft(d, tmp_path / "p.zip")
+    assert sorted(zipfile.ZipFile(z).namelist()) == ["Проект/draft_content.json", "Проект/video.mp4"]

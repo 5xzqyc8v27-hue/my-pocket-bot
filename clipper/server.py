@@ -1291,6 +1291,7 @@ class CapcutReq(BaseModel):
     moment: int
     preset: Preset
     drafts_dir: str = ""
+    clean: bool = False  # готовый вертикальный ролик без надписей + хук и субтитры дорожками
 
 
 @app.post("/api/capcut")
@@ -1303,8 +1304,13 @@ def capcut(req: CapcutReq):
     found = target is not None
     target = target or DATA / "capcut_drafts"
     try:
-        path = export_draft(Path(p["video"]), Moment.model_validate(p["moments"][req.moment]),
-                            req.preset, transcript_of(p), target, resolve=resolve_asset)
+        m = Moment.model_validate(p["moments"][req.moment])
+        if req.clean:
+            from .capcut import export_clean_draft
+            path = export_clean_draft(Path(p["video"]), m, apply_face(req.preset, p.get("face")), transcript_of(p),
+                                      target, resolve=resolve_asset, fonts=fonts_of(p))
+        else:
+            path = export_draft(Path(p["video"]), m, req.preset, transcript_of(p), target, resolve=resolve_asset)
     except ImportError:
         raise HTTPException(400, "Не установлена библиотека pycapcut (pip install pycapcut)")
     skipped = path / "не_добавлено.txt"

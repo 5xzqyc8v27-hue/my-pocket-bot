@@ -919,7 +919,10 @@ function renderMain() {
     h('div', {class: 'field'}, h('label', {}, 'Одна надпись для всех роликов (необязательно)'), h('input', {type: 'text', value: commonTitle, placeholder: 'Пусто — у каждого ролика свой хук', oninput: e => { commonTitle = e.target.value; }})),
     h('button', {class: 'btn', style: 'width:100%;margin-top:8px', disabled: busy || !p.moments.length, title: 'Создать проект CapCut с этим моментом, хуком и субтитрами', onclick: async () => {
       try { const r = await (await api('/api/capcut', 'POST', {project: p.id, moment: mom, preset})).json();
-        alert((r.capcut_found ? 'Черновик создан — откройте CapCut (если он был открыт, перезапустите), проект появится в списке.' : 'CapCut на этом компьютере не найден. Черновик сохранён в папку:\n' + r.path) + ((r.skipped || []).length ? '\n\nНе добавлено: ' + r.skipped.join(', ') : '')); } catch (e) { alert(e.message); } }}, 'Открыть момент в CapCut'));
+        alert((r.capcut_found ? 'Черновик создан — откройте CapCut (если он был открыт, перезапустите), проект появится в списке.' : 'CapCut на этом компьютере не найден. Черновик сохранён в папку:\n' + r.path) + ((r.skipped || []).length ? '\n\nНе добавлено: ' + r.skipped.join(', ') : '')); } catch (e) { alert(e.message); } }}, 'Открыть момент в CapCut'),
+    h('button', {class: 'btn', style: 'width:100%;margin-top:8px', disabled: busy || !p.moments.length, title: 'Проект CapCut с готовым вертикальным роликом без надписей; хук и субтитры — отдельными дорожками, их можно править', onclick: async () => {
+      try { const r = await (await api('/api/capcut', 'POST', {project: p.id, moment: mom, preset, clean: true})).json();
+        alert((r.capcut_found ? 'Черновик создан — откройте CapCut (если он был открыт, перезапустите), проект появится в списке.' : 'CapCut на этом компьютере не найден. Черновик сохранён в папку:\n' + r.path) + ((r.skipped || []).length ? '\n\nНе добавлено: ' + r.skipped.join(', ') : '')); } catch (e) { alert(e.message); } }}, 'Готовый ролик в CapCut (текст отдельно)'));
 
   const clipUrl = c => `/clips/${p.id}/${encodeURIComponent(c.file)}`;
   const clips = h('div', {},

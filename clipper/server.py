@@ -254,12 +254,12 @@ def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False,
     out_dir = DATA / "clips" / pid
     try:
         if merge and len(indexes) >= 2:  # отмеченные моменты — одним роликом, по порядку эфира
-            preset = apply_face(base, p.get("face"))
+            preset = streamer_banner(p, apply_face(base, p.get("face")))
             pieces = [(video, Moment.model_validate(p["moments"][i]), tr) for i in sorted(indexes)]
             title = common_title.strip()
             set_status(p, "render", f"Собираю нарезку из {len(pieces)} моментов")
             name = f"narezka_{slug(title or pieces[0][1].title)}_{preset.name}_{uuid.uuid4().hex[:4]}.mp4"
-            render_compilation(pieces, title, preset, out_dir / name, None, filler_of(p, preset), resolve_asset)
+            render_compilation(pieces, title, preset, out_dir / name, None, filler_of(p, preset), resolve_asset, fonts_of(p))
             first = pieces[0][1]
             with lock:
                 p.setdefault("clips", []).insert(0, {
@@ -817,6 +817,7 @@ class ClipsTopReq(BaseModel):
     period: str = "all"
     title: str = ""
     seconds: float = 11.5  # сколько секунд брать из каждого клипа
+    faces: bool = True  # крупный план лица того, кто говорит, вместо общего плана
     preset: Preset | None = None
 
 
@@ -845,7 +846,7 @@ def pick_top_clips(entries: list[dict], count: int) -> list[dict]:
 
 
 def clips_top_job(pid: str, st: dict, req: ClipsTopReq) -> None:
-    from .top import best_window, join_pieces
+    from .top import best_window, join_faces, join_pieces
     p = state["projects"][pid]
     try:
         chosen = req.clips
@@ -865,7 +866,7 @@ def clips_top_job(pid: str, st: dict, req: ClipsTopReq) -> None:
             labels.append(short_label(c.get("title") or f"Момент {n}"))
         set_status(p, "render", "Склеиваю моменты…")
         joined = DATA / "sources" / f"{pid}.mp4"
-        spans = join_pieces(pieces, joined)
+        spans = join_faces(pieces, joined) if req.faces else join_pieces(pieces, joined)
         moments = [Moment(start=a, end=b, title=label, caption="", hashtags=[], score=max(1, 100 - k * 5), reason="клип зрителей")
                    for k, ((a, b), label) in enumerate(zip(spans, labels))]
         info = probe(joined)
@@ -875,8 +876,7 @@ def clips_top_job(pid: str, st: dict, req: ClipsTopReq) -> None:
         title = req.title.strip() or (f"ТОП {len(moments)} МОМЕНТИ {st['name']} НАЙКРАЩЕ В КІНЦІ" if lang == "uk"
                                       else f"ТОП {len(moments)} МОМЕНТОВ {st['name']} ЛУЧШЕЕ В КОНЦЕ")
         preset = (req.preset or Preset.load("center", PRESETS)).model_copy(update={"layout": "center"})
-        if preset.content_zoom < 1.3:
-            preset = preset.model_copy(update={"content_zoom": 1.7})
+        preset = preset.model_copy(update={"content_zoom": 1.0 if req.faces else max(preset.content_zoom, 1.7)})
         fonts = ASSETS / st["id"] / "fonts"
         fonts = fonts if fonts.is_dir() else ASSETS / "common" / "fonts"
         name = f"top_{slug(title)}_{uuid.uuid4().hex[:4]}.mp4"
@@ -984,7 +984,7 @@ def theme_render_job(tid: str, req: ThemeRenderReq) -> None:
         name = f"podborka_{slug(th['title'])}_{uuid.uuid4().hex[:4]}.mp4"
         music = resolve_asset(req.music) if req.music else None
         render_compilation(pieces, th["title"], req.preset, DATA / "clips" / home["id"] / name, music,
-                           filler_of(home, req.preset), resolve_asset)
+                           filler_of(home, req.preset), resolve_asset, fonts_of(home))
         with lock:
             home.setdefault("clips", []).insert(0, {
                 "file": name, "title": th["title"], "caption": th.get("why", ""), "hashtags": [], "kind": "theme",

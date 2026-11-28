@@ -120,19 +120,20 @@ def join_faded(parts: list[Path], lengths: list[float], out: Path, fade: float =
 
 def render_compilation(pieces: list[tuple[Path, Moment, Transcript | None]], title: str, preset: Preset,
                        out_path: Path, music: Path | None = None, filler: Path | None = None,
-                       resolve=None) -> Path:
+                       resolve=None, fonts: list[Path] | None = None) -> Path:
     """Монтирует каждый кусок в общем оформлении с одним заголовком и склеивает: встык или с затемнением."""
     if len(pieces) < 2:
         raise ValueError("Для подборки нужно минимум два куска")
-    base = preset.model_copy(update={"title": True, "title_anim": False, "speed": 1.0,
+    base = preset.model_copy(update={"title": True, "title_anim": False, "speed": 1.0, "ad_break": "",
                                     "camera": "push" if preset.camera == "push" else "none", "teaser": 0.0})
+    rest = base.model_copy(update={"title": False}) if preset.title_seconds > 0 else base  # хук только в начале
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         names = []
         for i, (video, moment, tr) in enumerate(pieces):
             part = Path(tmp) / f"part{i:02d}.mp4"
             render_clip(video, moment.model_copy(update={"title": title, "inserts": [], "chat_text": ""}),
-                        base, part, tr, filler, resolve)
+                        base if i == 0 else rest, part, tr, filler, resolve, fonts)
             names.append(f"file '{part.name}'")
         (Path(tmp) / "list.txt").write_text("\n".join(names), encoding="utf-8")
         joined = Path(tmp) / "joined.mp4"
@@ -143,6 +144,17 @@ def render_compilation(pieces: list[tuple[Path, Moment, Transcript | None]], tit
             run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", "list.txt",
                  "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k",
                  "-movflags", "+faststart", str(joined)], cwd=Path(tmp))
+        banner = (Path(resolve(preset.ad_break)) if resolve else Path(preset.ad_break)) if preset.ad_break else None
+        if banner and banner.is_file():  # рекламная пауза один раз, на стыке кусков ближе к середине
+            from .render import add_ad_break
+            fade = 0.45 if preset.transition == "fade" else 0.0
+            cuts, t = [], 0.0
+            for _, m, _ in pieces[:-1]:
+                t += m.duration - fade
+                cuts.append(t)
+            plain = Path(tmp) / "plain.mp4"
+            joined.rename(plain)
+            add_ad_break(plain, banner, preset, joined, cuts)
         if music and Path(music).exists():  # тихая музыка под всем роликом
             run(["ffmpeg", "-y", "-v", "error", "-i", str(joined), "-stream_loop", "-1", "-i", str(Path(music).resolve()),
                  "-filter_complex", "[1:a]volume=0.16[m];[0:a][m]amix=inputs=2:normalize=0:duration=first[a]",

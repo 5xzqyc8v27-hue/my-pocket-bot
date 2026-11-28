@@ -170,3 +170,31 @@ def best_window(video: Path, length: float, want: float = 12.0) -> tuple[float, 
     peak = peaks[0] if peaks else length / 2
     start = max(0.0, min(length - want, peak - want * 0.62))
     return round(start, 2), round(start + want, 2)
+
+
+def join_faces(pieces: list[tuple[Path, float, float]], out: Path, size: tuple[int, int] = (1000, 1080)) -> list[tuple[float, float]]:
+    """Как join_pieces, но каждый кусок кадрируется на лицо того, кто говорит (крупный план).
+
+    Возвращает границы кусков в склеенном файле. Где лиц нет (игра на весь экран), берётся центр кадра."""
+    from .models import Moment, Preset
+    from .render import render_clip
+    preset = Preset(name="faces", layout="speaker", width=size[0], height=size[1], title=False, subtitles=False,
+                    camera="none", normalize=False, watermark="")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        cmd, parts, spans, t = ["ffmpeg", "-y", "-v", "error"], [], [], 0.0
+        for j, (path, start, end) in enumerate(pieces):
+            part = Path(tmp) / f"face{j:02d}.mp4"
+            render_clip(Path(path), Moment(start=start, end=end, title="", caption="", hashtags=[], score=1, reason=""),
+                        preset, part)
+            cmd += ["-i", str(part)]
+            parts.append(f"[{j}:v]fps=30,setsar=1,format=yuv420p[v{j}]")
+            parts.append(f"[{j}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a{j}]" if has_audio(part)
+                         else f"anullsrc=r=48000:cl=stereo,atrim=0:{end - start:.3f}[a{j}]")
+            spans.append((round(t, 3), round(t + end - start, 3)))
+            t += end - start
+        pads = "".join(f"[v{j}][a{j}]" for j in range(len(pieces)))
+        parts.append(f"{pads}concat=n={len(pieces)}:v=1:a=1[v][a]")
+        run(cmd + ["-filter_complex", ";".join(parts), "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast",
+                   "-crf", "18", "-c:a", "aac", "-b:a", "160k", str(out)])
+    return spans

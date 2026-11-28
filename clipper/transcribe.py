@@ -42,6 +42,20 @@ def unloop(text: str) -> str:
     return re.sub(r"(\b[\w'’]+(?:\s+[\w'’]+)?[,.!?]?\s+)(?:\1){3,}", r"\1\1\1", text + " ").strip()
 
 
+NOISE = ("дякую", "дякую за перегляд", "спасибо", "спасибо за просмотр", "продолжение следует",
+         "субтитры сделал dimatorzok", "редактор субтитров", "thank you", "thanks for watching")
+
+
+def is_noise(text: str) -> bool:
+    """Фразы, которые модель выдумывает на шуме и музыке: пометки в скобках и звёздочках, «спасибо за просмотр»."""
+    t = text.strip()
+    if not t.strip(".… -–—"):
+        return True
+    if t[:1] in "[(*" and t[-1:] in "])*":
+        return True
+    return t.lower().strip(".!… ") in NOISE
+
+
 def transcribe_sherpa(video: Path, model_size: str = "small", language: str | None = "ru") -> Transcript:
     """Запасной движок: sherpa-onnx. Модели берутся с GitHub, пословных таймингов нет (фразы целиком)."""
     import subprocess
@@ -77,7 +91,7 @@ def transcribe_sherpa(video: Path, model_size: str = "small", language: str | No
             stream.accept_waveform(16000, np.concatenate([samples, np.zeros(pad, dtype=np.float32)]))
             rec.decode_stream(stream)
             text = unloop(stream.result.text.strip())
-            if text[:1] in "[(" and text[-1:] in "])":  # «[музика]» и прочие выдуманные пометки на шуме
+            if is_noise(text):
                 text = ""
             if text:
                 start = seg.start / 16000

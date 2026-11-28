@@ -187,7 +187,9 @@ def export_clean_draft(source: Path, moment: Moment, preset: Preset, transcript:
              preset.title_y, "hook")
     if preset.subtitles and transcript:
         cursor = 0.0
-        for group in word_groups(transcript.words_between(moment.start, moment.end), max(1, preset.subtitle_words)):
+        from .subtitles import line_chars
+        for group in word_groups(transcript.words_between(moment.start, moment.end), max(1, preset.subtitle_words),
+                                 line_chars(preset)):
             start = (group[0].start - moment.start) / preset.speed
             end = (group[-1].end - moment.start) / preset.speed
             if pause_at is not None and start < pause_at < end:

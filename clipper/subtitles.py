@@ -94,12 +94,20 @@ def title_lines(title: str, max_chars: int, color: str, highlight: str, upper: b
     return out
 
 
-def word_groups(words: list[Word], size: int) -> list[list[Word]]:
-    """Слова по группам до size штук; группа не переходит через конец фразы и через паузу."""
+def line_chars(preset: Preset) -> int:
+    """Сколько знаков субтитров помещается в строку кадра при заданном размере шрифта."""
+    return max(8, int(preset.width * 0.9 / (preset.subtitle_size * 0.6)))
+
+
+def word_groups(words: list[Word], size: int, max_chars: int = 0) -> list[list[Word]]:
+    """Слова по группам до size штук; группа не переходит через конец фразы и через паузу.
+
+    max_chars — сколько знаков помещается в строку: длинные слова уходят в следующую группу."""
     groups, cur = [], []
     words = [w for w in words if w.text.strip("-–— ")]  # одиночные тире из диалогов в субтитры не идут
     for w in words:
-        if cur and (len(cur) >= size or cur[-1].text.rstrip()[-1:] in ".!?…" or w.start - cur[-1].end > 0.6):
+        wide = max_chars and sum(len(x.text) + 1 for x in cur) + len(w.text) > max_chars
+        if cur and (len(cur) >= size or wide or cur[-1].text.rstrip()[-1:] in ".!?…" or w.start - cur[-1].end > 0.6):
             groups.append(cur)
             cur = []
         cur.append(w)
@@ -168,7 +176,7 @@ def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
         pos = f"{{\\pos({w // 2},{int(h * preset.subtitle_y)}){pop}}}"
         hi, base = ass_color(preset.subtitle_highlight), ass_color(preset.subtitle_color)
         n = max(1, preset.subtitle_words)
-        for group in word_groups(words, n):
+        for group in word_groups(words, n, line_chars(preset)):
             for j, word in enumerate(group):
                 start = (word.start - clip_start) / speed
                 end = ((group[j + 1].start if j + 1 < len(group) else word.end) - clip_start) / speed

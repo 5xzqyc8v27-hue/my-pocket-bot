@@ -375,3 +375,9 @@ def test_zip_draft(tmp_path):
     d = tmp_path / "Проект"; d.mkdir(); (d / "draft_content.json").write_text("{}"); (d / "video.mp4").write_bytes(b"x")
     z = zip_draft(d, tmp_path / "p.zip")
     assert sorted(zipfile.ZipFile(z).namelist()) == ["Проект/draft_content.json", "Проект/video.mp4"]
+
+
+def test_noise_phrases():
+    from clipper.transcribe import is_noise
+    assert all(is_noise(t) for t in ("[музика]", "*сміх*", "Дякую.", "Дякую за перегляд!", "...", "(оплески)"))
+    assert not any(is_noise(t) for t in ("Дякую тобі, брате", "Вибачайся.", "Я камеру відірвав!"))

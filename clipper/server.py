@@ -2012,6 +2012,7 @@ async def on_error(_: Request, exc: Exception):
 
 
 SAMPLE_TITLES = {
+    "kalatay_vod_yulya": "Kalatay · стикеры: подвёз Юлю (из записи эфира)", "kalatay_vod_bitkoin": "Kalatay · стикеры: что такое биткоин (из записи эфира)",
     "kalatay_top_26_noyabrya": "Kalatay · ТОП 4 стрима 26 ноября", "kalatay_top_25_noyabrya": "Kalatay · ТОП 4 стрима 25 ноября",
     "kalatay_mesyac_gosti": "Kalatay · диалог: не пустил гостей", "kalatay_mesyac_glyuki": "Kalatay · диалог: у Васи глюки",
     "kalatay_mesyac_bitkoin": "Kalatay · диалог: что такое биткоин", "kalatay_25_gamos_uchit": "Kalatay · диалог: Гамос учит играть",

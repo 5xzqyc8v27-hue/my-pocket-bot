@@ -235,7 +235,8 @@ def find(words: list[Word], clip_start: float, speed: float = 1.0, limit: int = 
         if chosen:
             moving = chosen[1].suffix.lower() in MOVING
             out.append(Insert(file=str(chosen[1]), at=round(max(0.0, at - 0.1), 2), duration=2.0 if moving else 1.7,
-                              place="right" if side % 2 == 0 else "left", scale=0.26 if moving else 0.24))
+                              place="mid" if chosen[0] in SIGNS else "right" if side % 2 == 0 else "left",
+                              scale=0.62 if chosen[0] in SIGNS else 0.26 if moving else 0.24))  # табличка широкая
             used.update((chosen[0], str(chosen[1])))
             last, side = at, side + 1
         if len(out) >= limit:

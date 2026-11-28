@@ -2012,6 +2012,9 @@ async def on_error(_: Request, exc: Exception):
 
 
 SAMPLE_TITLES = {
+    "kalatay_gta_top4": "Kalatay · GTA 6: ТОП 4 момента", "kalatay_gta_ograblenie": "Kalatay · GTA 6: грабит кассу",
+    "kalatay_vchera_top4": "Kalatay · ТОП 4 стрима 27 ноября", "kalatay_vchera_cs": "Kalatay · CS2 с субтитрами (27 ноября)",
+    "kalatay_vchera_germaniya": "Kalatay · стикеры: едет в Германию (27 ноября)",
     "kalatay_vod_yulya": "Kalatay · стикеры: подвёз Юлю (из записи эфира)", "kalatay_vod_bitkoin": "Kalatay · стикеры: что такое биткоин (из записи эфира)",
     "kalatay_top_26_noyabrya": "Kalatay · ТОП 4 стрима 26 ноября", "kalatay_top_25_noyabrya": "Kalatay · ТОП 4 стрима 25 ноября",
     "kalatay_mesyac_gosti": "Kalatay · диалог: не пустил гостей", "kalatay_mesyac_glyuki": "Kalatay · диалог: у Васи глюки",

@@ -50,7 +50,7 @@ def camera_filter(preset: Preset, length: float, peaks: list[float], events: lis
 IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp")
 AUDIO_EXT = (".mp3", ".wav", ".ogg", ".m4a", ".aac")
 PLACE_Y = {"top": "H*0.22-h/2", "center": "(H-h)/2", "bottom": "H*0.78-h/2", "full": "0",
-           "left": "H*0.6-h/2", "right": "H*0.6-h/2"}
+           "left": "H*0.6-h/2", "right": "H*0.6-h/2", "mid": "H*0.62-h/2"}  # mid — по центру над субтитрами
 PLACE_X = {"left": "W*0.25-w/2", "right": "W*0.75-w/2"}
 
 

@@ -406,7 +406,7 @@ def test_stickers_and_two_color_hook():
     words = [Word(text=t, start=i * 1.5, end=i * 1.5 + 0.4) for i, t in enumerate(
         ["ми", "дамо", "долари", "і", "автобус", "в", "Германію", "долари"])]
     got = [(Path(i.file).stem, i.place) for i in find(words, 0)]
-    assert got == [("dollars", "right"), ("bus", "left"), ("germany", "right")]
+    assert got == [("dollars", "right"), ("bus", "left"), ("germany", "mid")]
     rows = title_lines("калатай відправляє *вамоса* в *германію*", 20, "FFFFFF", "FF3B5C", False, None, "FFC81F")
     assert "&H001FC8FF&" in rows[0] and "&H005C3BFF&" not in rows[0] and "&H005C3BFF&" in rows[1]
     p = Preset.load("stickers", Path(__file__).parent.parent / "presets")

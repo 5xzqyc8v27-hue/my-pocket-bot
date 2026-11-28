@@ -329,3 +329,17 @@ def test_kick_live_uses_site_api(monkeypatch):
     assert kick.live_info("kalatay3")["url"].endswith(".m3u8")
     monkeypatch.setattr(kick, "_json", lambda path: {"livestream": None, "playback_url": ""})
     assert streams.is_live("kick", "kalatay3") == (False, "")
+
+
+def test_hook_highlight_and_top_pick():
+    from clipper.subtitles import title_lines
+    from clipper.server import pick_top_clips
+    from clipper.top import list_top
+    rows = title_lines("Нейбор *розбив монітор* на стрімі", 16, "FFFFFF", "FFD400")
+    assert len(rows) == 3 and rows[0].count("&H0000D4FF&") == 1 and "&H0000D4FF&" not in rows[2]
+    assert title_lines("*одне*", 20, "FFFFFF", "FF0000")[0].endswith("ОДНЕ")
+    day = 86400
+    entries = [{"url": "a", "views": 50, "ts": day * 10, "duration": 20}, {"url": "b", "views": 40, "ts": day * 10 + 5, "duration": 20},
+               {"url": "c", "views": 30, "ts": day * 11, "duration": 300}, {"url": "d", "views": 20, "ts": day * 12, "duration": 15}]
+    assert [e["url"] for e in pick_top_clips(entries, 3)] == ["a", "d"]
+    assert list_top("ТОП 3", 1080, 1920) < list_top("ТОП 4 МОМЕНТИ КАЛАТАЯ НАЙКРАЩЕ В КІНЦІ", 1080, 1920)

@@ -12,7 +12,8 @@ from .subtitles import HEADER, _escape, ass_color, ass_time
 
 LINE_COLORS = ["3DDC4A", "FFD400", "FF3DD4"]  # цвет первого слова в каждой строке заголовка
 LAST_REST = "35D0FF"  # цвет остатка последней строки
-LIST_TOP, LIST_STEP = 0.235, 0.043
+LIST_TOP, LIST_STEP = 0.235, 0.046
+TITLE_SIZE, LIST_SIZE = 80, 58
 
 
 def has_audio(path: Path) -> bool:
@@ -27,7 +28,7 @@ def _even(x: float) -> int:
 
 def _title_lines(title: str, width: int, size: int) -> list[str]:
     """Заголовок в 2-3 строки, слова раскрашены как в популярных нарезках."""
-    lines = textwrap.wrap(title.upper(), max(8, int(width * 0.92 / (size * 0.62))))[:3]
+    lines = textwrap.wrap(title.upper(), max(8, int(width * 0.92 / (size * 0.74))))[:3]
     out = []
     for i, line in enumerate(lines):
         first, _, rest = line.partition(" ")
@@ -37,21 +38,29 @@ def _title_lines(title: str, width: int, size: int) -> list[str]:
     return out
 
 
+def list_top(title: str, width: int, height: int) -> float:
+    """Где начинается список (доля высоты): сразу под заголовком, сколько бы строк он ни занял."""
+    rows = len(_title_lines(title, width, TITLE_SIZE))
+    return (height * 0.04 + rows * TITLE_SIZE * 1.14 + 46) / height
+
+
 def build_top_ass(title: str, labels: list[str], starts: list[float], total: float, preset: Preset) -> str:
     """labels[k] — подпись места k+1; starts[k] — когда это место начинает играть."""
     w, h = preset.width, preset.height
-    size = 66
-    out = HEADER.format(w=w, h=h, font=preset.font, sub_size=54, sub_color=ass_color("FFFFFF"),
-                        sub_outline=4, title_size=size, title_color=ass_color("FFFFFF"), title_outline=5)
+    size, top = TITLE_SIZE, list_top(title, preset.width, preset.height)
+    out = HEADER.format(box_color="&H00000000", box_pad=8, w=w, h=h, font=preset.font, sub_size=LIST_SIZE,
+                        sub_color=ass_color("FFFFFF"), sub_outline=5, title_size=size,
+                        title_color=ass_color("FFFFFF"), title_outline=6)
     span = f"{ass_time(0)},{ass_time(total)}"
     lines = []
     for i, line in enumerate(_title_lines(title, w, size)):
-        lines.append(f"Dialogue: 2,{span},Title,{{\\pos({w // 2},{int(h * 0.045 + i * size * 1.12 + size / 2)})}}{line}")
+        lines.append(f"Dialogue: 2,{span},Title,{{\\pos({w // 2},{int(h * 0.04 + i * size * 1.14 + size / 2)})}}{line}")
     for k, label in enumerate(labels):
-        y = int(h * (LIST_TOP + k * LIST_STEP))
-        lines.append(f"Dialogue: 2,{span},Sub,{{\\an4\\pos({int(w * 0.07)},{y})}}{k + 1}.")
+        y = int(h * (top + k * LIST_STEP) + LIST_SIZE / 2)
+        lines.append(f"Dialogue: 2,{span},Sub,{{\\an4\\pos({int(w * 0.06)},{y})}}{k + 1}.")
         lines.append(f"Dialogue: 2,{ass_time(starts[k])},{ass_time(total)},Sub,"
-                     f"{{\\an4\\pos({int(w * 0.18)},{y})\\c{ass_color('3DDC4A')}&\\fad(200,0)}}{_escape(label)}")
+                     f"{{\\an4\\pos({int(w * 0.16)},{y})\\c{ass_color('3DDC4A')}&\\fad(200,0)"
+                     f"\\fscx70\\fscy70\\t(0,220,\\fscx100\\fscy100)}}{_escape(label)}")
     if preset.watermark.strip():
         lines.append(f"Dialogue: 3,{span},Sub,{{\\pos({w // 2},{int(h * 0.985)})\\fs26\\alpha&H60&}}{_escape(preset.watermark)}")
     return out + "\n".join(lines) + "\n"
@@ -64,9 +73,9 @@ def render_top(source: Path, moments: list[Moment], title: str, preset: Preset, 
         raise ValueError("Для топа нужно от 2 до 10 моментов")
     W, H, n = preset.width, preset.height, len(moments)
     order = list(range(n - 1, -1, -1))  # сначала последнее место
-    box_top = _even(H * (LIST_TOP + n * LIST_STEP))
-    box_bottom = _even(H * (0.82 if photo else 0.96))
-    bw, bh = _even(W * 0.82), box_bottom - box_top
+    box_top = _even(H * (list_top(title, W, H) + n * LIST_STEP) + 24)
+    box_bottom = _even(H * (0.82 if photo else 0.965))
+    bw, bh = _even(W * 0.94), box_bottom - box_top
     audio = has_audio(source)
 
     cmd = ["ffmpeg", "-y", "-v", "error"]
@@ -84,12 +93,17 @@ def render_top(source: Path, moments: list[Moment], title: str, preset: Preset, 
                        f"crop={bw}:{bh - cam_h}:(iw-{bw})*{1.0 if x + w / 2 < 0.35 else 0.0 if x + w / 2 > 0.65 else 0.5}:(ih-{bh - cam_h})/2[cb{j}];"
                        f"[ca{j}][cb{j}]vstack[c{j}]")
         else:
-            content = f"[f{j}]scale={bw}:{bh}:force_original_aspect_ratio=decrease[c{j}]"
+            zoom = max(1.0, preset.content_zoom)  # крупнее кадр: края горизонтального видео обрезаются
+            content = (f"[f{j}]scale=-2:{_even(min(bh - 10, (bw - 10) * 9 / 16 * zoom))},"
+                       f"crop='min(iw,{bw - 10})':ih[c{j}]" if zoom > 1.0 else
+                       f"[f{j}]scale={bw - 10}:{bh - 10}:force_original_aspect_ratio=decrease[c{j}]")
         parts += [
             f"[{j}:v]split=2[b{j}][f{j}]",
-            f"[b{j}]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=30:2[bg{j}]",
+            f"[b{j}]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=30:2,"
+            f"eq=brightness=-0.16:saturation=1.15[bg{j}]",
             content,
-            f"[bg{j}][c{j}]overlay=(W-w)/2:{box_top}+({bh}-h)/2,fps={preset.fps},setsar=1[s{j}]",
+            f"[c{j}]pad=iw+10:ih+10:5:5:white[cf{j}]",  # белая рамка вокруг кадра
+            f"[bg{j}][cf{j}]overlay=(W-w)/2:{box_top}+({bh}-h)/4,fps={preset.fps},setsar=1[s{j}]",
         ]
     pads = "".join(f"[s{j}]" + (f"[{j}:a]" if audio else "") for j in range(n))
     parts.append(f"{pads}concat=n={n}:v=1:a={1 if audio else 0}[cv]" + ("[ca]" if audio else ""))
@@ -126,3 +140,33 @@ def _link_fonts(fonts_dir: Path, tmp: Path) -> str:
             if f.suffix.lower() in (".ttf", ".otf"):
                 (target / f.name).write_bytes(f.read_bytes())
     return "fonts"
+
+
+def join_pieces(pieces: list[tuple[Path, float, float]], out: Path) -> list[tuple[float, float]]:
+    """Куски из разных видео -> один файл 1920x1080. Возвращает границы каждого куска в нём."""
+    cmd, parts, spans, t = ["ffmpeg", "-y", "-v", "error"], [], [], 0.0
+    for j, (path, start, end) in enumerate(pieces):
+        cmd += ["-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(Path(path).resolve())]
+        parts.append(f"[{j}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,"
+                     f"fps=30,setsar=1,format=yuv420p[v{j}]")
+        parts.append(f"[{j}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a{j}]" if has_audio(path)
+                     else f"anullsrc=r=48000:cl=stereo,atrim=0:{end - start:.3f}[a{j}]")
+        spans.append((round(t, 3), round(t + end - start, 3)))
+        t += end - start
+    pads = "".join(f"[v{j}][a{j}]" for j in range(len(pieces)))
+    parts.append(f"{pads}concat=n={len(pieces)}:v=1:a=1[v][a]")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    run(cmd + ["-filter_complex", ";".join(parts), "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast",
+               "-crf", "18", "-c:a", "aac", "-b:a", "160k", str(out)])
+    return spans
+
+
+def best_window(video: Path, length: float, want: float = 12.0) -> tuple[float, float]:
+    """Самый сильный отрезок клипа: вокруг самого громкого места, с запасом на подводку."""
+    from .moments import loud_peaks
+    if length <= want + 1:
+        return 0.0, length
+    peaks = loud_peaks(video, 0, length, count=1)
+    peak = peaks[0] if peaks else length / 2
+    start = max(0.0, min(length - want, peak - want * 0.62))
+    return round(start, 2), round(start + want, 2)

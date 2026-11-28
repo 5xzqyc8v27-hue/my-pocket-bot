@@ -115,6 +115,8 @@ class Preset(BaseModel):
     title_color: str = "FFFFFF"
     title_y: float = 0.12
     title_glow: str | None = None  # цвет неонового свечения, например A020F0
+    title_highlight: str = "FFD400"  # цвет слов хука, выделенных звёздочками: «НЕЙБОР *РОЗБИВ МОНІТОР*»
+    title_box: str = ""  # цвет плашки под хуком (RRGGBB); пусто — хук с обводкой, без плашки
     title_anim: bool = False  # появление с увеличением
     teaser: float = 0.0  # секунд самого громкого места в самом начале ролика (0 — без тизера)
     # субтитры

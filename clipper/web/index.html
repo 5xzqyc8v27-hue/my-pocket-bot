@@ -300,6 +300,8 @@ const TABS = {
     ['title_y', 'Положение по высоте', 'range', [0.03, 0.95, 0.01]],
     ['title_color', 'Цвет', 'color'],
     ['title_glow', 'Неоновое свечение (цвет RRGGBB, пусто — без него)', 'text'],
+    ['title_highlight', 'Цвет слов, выделенных *звёздочками*', 'color'],
+    ['title_box', 'Плашка под хуком (цвет RRGGBB, пусто — без неё)', 'text'],
     ['title_anim', 'Появление с увеличением', 'bool'],
     ['teaser', 'Тизер: секунд самого громкого места в самом начале', 'range', [0, 2.5, 0.1]],
   ],
@@ -651,6 +653,10 @@ function historyBlock(st) {
         if (!confirm(`Скачать и обработать трансляций: ${pick.size}? Длинные эфиры занимают несколько гигабайт каждый.`)) return;
         for (const url of pick) await api('/api/projects', 'POST', {source: url, streamer: st.id, picker: 'auto', count: histOpt.count, min: 15, max: 60, focus: histOpt.focus, auto_preset: histOpt.preset});
         pick.clear(); closeModal(); view = 'Проект'; refresh(true); }}, 'В монтаж'),
+      histMode === 'clips' ? h('button', {class: 'btn', style: 'flex:none;align-self:end', title: 'Один ролик «ТОП N» со списком мест. Отмечены клипы — берутся они; ничего не отмечено — панель сама берёт самые просматриваемые из разных эфиров', onclick: async () => {
+        const chosen = (items || []).filter(v => pick.has(v.url)).map(v => ({url: v.url, title: v.title}));
+        const n = chosen.length || +prompt('Сколько моментов в топе (2–10)?', '4'); if (!n) return;
+        try { const r = await (await api(`/api/streamers/${st.id}/clips_top`, 'POST', {clips: chosen, count: n, period: clipRange, preset})).json(); pick.clear(); closeModal(); cur = r.id; view = 'Проект'; refresh(true); } catch (e) { alert(e.message); } }}, 'ТОП из клипов') : null,
       h('button', {class: 'btn', style: 'flex:none;align-self:end', onclick: () => load(true)}, 'Обновить')),
     items.length ? items.map(v => h('label', {class: 'kv', style: 'padding:4px 0;cursor:pointer'},
       h('span', {style: 'color:var(--text)'}, h('input', {type: 'checkbox', checked: pick.has(v.url), onchange: e => { e.target.checked ? pick.add(v.url) : pick.delete(v.url); }}), ' ', v.title || v.id),

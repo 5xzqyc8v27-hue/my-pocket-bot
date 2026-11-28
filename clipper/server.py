@@ -780,6 +780,105 @@ def make_top(req: TopReq):
     return {"ok": True}
 
 
+class ClipsTopReq(BaseModel):
+    clips: list[dict] = []  # отмеченные клипы [{url, title}]; пусто — панель сама берёт лучшие из разных эфиров
+    count: int = 4
+    period: str = "all"
+    title: str = ""
+    seconds: float = 11.5  # сколько секунд брать из каждого клипа
+    preset: Preset | None = None
+
+
+def short_label(text: str, limit: int = 24) -> str:
+    """Подпись места в топе: коротко и без обрыва посреди слова."""
+    words, out = text.strip().split(), ""
+    for word in words:
+        if out and len(out) + len(word) + 1 > limit:
+            break
+        out = (out + " " + word).strip()
+    return (out or text.strip()[:limit]).capitalize()
+
+
+def pick_top_clips(entries: list[dict], count: int) -> list[dict]:
+    """Лучшие клипы по просмотрам, не больше одного с каждого дня — чтобы топ был из разных эфиров."""
+    out, days = [], set()
+    for e in sorted(entries, key=lambda e: -(e.get("views") or 0)):
+        day = int((e.get("ts") or 0) // 86400)
+        if day in days or not 6 <= (e.get("duration") or 0) <= 90:
+            continue
+        days.add(day)
+        out.append(e)
+        if len(out) == count:
+            break
+    return out
+
+
+def clips_top_job(pid: str, st: dict, req: ClipsTopReq) -> None:
+    from .top import best_window, join_pieces
+    p = state["projects"][pid]
+    try:
+        chosen = req.clips
+        if not chosen:
+            set_status(p, "download", "Ищу лучшие клипы канала…")
+            entries = (kick.clip_entries(st["channel"], req.period) if st["platform"] == "kick"
+                       else history.list_clips(st["channel"], req.period))
+            chosen = pick_top_clips(entries, max(2, min(req.count, 10)))
+        if len(chosen) < 2:
+            raise RuntimeError("Для топа нужно минимум два клипа — за этот период их не нашлось")
+        pieces, labels = [], []
+        for n, c in enumerate(chosen, 1):
+            set_status(p, "download", f"Скачиваю клип {n} из {len(chosen)}: {c.get('title', '')[:40]}")
+            video = fetch(c["url"], DATA / "sources" / "clips")
+            start, end = best_window(video, probe(video)["duration"], req.seconds)
+            pieces.append((video, start, end))
+            labels.append(short_label(c.get("title") or f"Момент {n}"))
+        set_status(p, "render", "Склеиваю моменты…")
+        joined = DATA / "sources" / f"{pid}.mp4"
+        spans = join_pieces(pieces, joined)
+        moments = [Moment(start=a, end=b, title=label, caption="", hashtags=[], score=max(1, 100 - k * 5), reason="клип зрителей")
+                   for k, ((a, b), label) in enumerate(zip(spans, labels))]
+        info = probe(joined)
+        with lock:
+            p.update(video=str(joined), moments=[m.model_dump() for m in moments], **info)
+        lang = st.get("lang") or "ru"
+        title = req.title.strip() or (f"ТОП {len(moments)} МОМЕНТИ {st['name']} НАЙКРАЩЕ В КІНЦІ" if lang == "uk"
+                                      else f"ТОП {len(moments)} МОМЕНТОВ {st['name']} ЛУЧШЕЕ В КОНЦЕ")
+        preset = (req.preset or Preset.load("center", PRESETS)).model_copy(update={"layout": "center"})
+        if preset.content_zoom < 1.3:
+            preset = preset.model_copy(update={"content_zoom": 1.7})
+        fonts = ASSETS / st["id"] / "fonts"
+        fonts = fonts if fonts.is_dir() else ASSETS / "common" / "fonts"
+        name = f"top_{slug(title)}_{uuid.uuid4().hex[:4]}.mp4"
+        render_top(joined, moments, title, preset, DATA / "clips" / pid / name, None, fonts if fonts.is_dir() else None)
+        with lock:
+            p.setdefault("clips", []).insert(0, {
+                "file": name, "title": title, "caption": "", "hashtags": [], "kind": "top", "score": 100,
+                "profanity": False, "preset": preset.name, "start": 0, "end": moments[-1].end, "speed": 1.0,
+                "created": time.time()})
+        set_status(p, "ready", f"Топ из {len(moments)} клипов готов")
+    except Exception as exc:
+        traceback.print_exc()
+        set_status(p, "error", str(exc)[:500])
+
+
+@app.post("/api/streamers/{sid}/clips_top")
+def clips_top(sid: str, req: ClipsTopReq):
+    """ТОП из клипов зрителей: лучшие моменты разных эфиров одним роликом со списком мест."""
+    st = state["streamers"].get(sid)
+    if not st:
+        raise HTTPException(404, "Стример не найден")
+    if st["platform"] not in ("twitch", "kick"):
+        raise HTTPException(400, "Клипы зрителей доступны для Twitch и Kick")
+    pid = uuid.uuid4().hex[:8]
+    with lock:
+        state["projects"][pid] = {"id": pid, "source": "клипы зрителей", "title": f"ТОП клипов · {st['name']}",
+                                  "status": "queued", "message": "В очереди", "moments": [], "clips": [], "filler": "",
+                                  "streamer": sid, "created": time.time()}
+    save_state()
+    threading.Thread(target=clips_top_job, args=(pid, st, req), daemon=True).start()
+    return {"id": pid}
+
+
 # ---------- тематические подборки из нескольких трансляций ----------
 
 theme_status: dict = {"busy": False, "message": ""}
@@ -1849,6 +1948,8 @@ async def on_error(_: Request, exc: Exception):
 
 
 SAMPLE_TITLES = {
+    "kalatay_top4": "Kalatay · ТОП 4 моменти", "kalatay_top3": "Kalatay · ТОП 3 приколи",
+    "kalatay_hook_monitor": "Kalatay · хук: Розбив монітор", "kalatay_hook_biy": "Kalatay · хук: Бій з тінню",
     "kalatay_1_pryzhok_viry_baner": "Kalatay · Прижок віри (банер UPG)", "kalatay_2_gorobchyk_mem": "Kalatay · Горобчик (мем)",
     "kalatay_3_nova_zadacha_vebka": "Kalatay · Нова задача (вебка + плашка)", "kalatay_4_mama_spalyla_baner": "Kalatay · Мама спалила вік (банер UPG)",
     "kalatay_mem_zadacha_na_raund": "Kalatay · мем: Задача на раунд", "kalatay_mem_neibor_i_mama": "Kalatay · мем: Нейбор и мама",

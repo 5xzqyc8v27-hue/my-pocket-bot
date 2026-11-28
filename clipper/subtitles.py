@@ -15,6 +15,7 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV
 Style: Sub,{font},{sub_size},{sub_color},&H00000000,&H80000000,1,1,{sub_outline},2,5,40,40,40
 Style: Title,{font},{title_size},{title_color},&H00000000,&H80000000,1,1,{title_outline},2,5,40,40,40
+Style: TitleBox,{font},{title_size},{title_color},{box_color},{box_color},1,3,{box_pad},0,5,40,40,40
 
 [Events]
 Format: Layer, Start, End, Style, Text
@@ -58,6 +59,29 @@ def chat_lines(user: str, text: str, preset: Preset, size: int = 44) -> list[str
     return lines or [shown]
 
 
+def title_lines(title: str, max_chars: int, color: str, highlight: str) -> list[str]:
+    """Хук в 1–3 строки; слова между звёздочками красятся в цвет выделения."""
+    words, hot = [], False
+    for raw in title.upper().split():
+        hot = hot or raw.startswith("*")
+        word = raw.strip("*")
+        if word:
+            words.append((word, hot))
+        if raw.endswith("*") and (word or len(raw) == 1 and hot):
+            hot = False
+    rows, row, size = [], [], 0
+    for word, mark in words:
+        if row and size + len(word) + 1 > max_chars:
+            rows.append(row)
+            row, size = [], 0
+        row.append((word, mark))
+        size += len(word) + 1
+    if row:
+        rows.append(row)
+    base, hi = ass_color(color), ass_color(highlight)
+    return [" ".join(f"{{\\c{hi if mark else base}&}}{_escape(word)}" for word, mark in r) for r in rows[:3]]
+
+
 def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
               preset: Preset, chat: tuple[str, str] | None = None) -> str:
     """Собирает ASS: надпись-хук на весь ролик и субтитры с подсветкой текущего слова."""
@@ -69,6 +93,7 @@ def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
         sub_outline=max(3, preset.subtitle_size // 14),
         title_size=preset.title_size, title_color=ass_color(preset.title_color),
         title_outline=max(3, preset.title_size // 14),
+        box_color=ass_color(preset.title_box or "000000"), box_pad=max(8, preset.title_size // 5),
     )
     lines: list[str] = []
     if chat and preset.layout == "chat":
@@ -85,16 +110,19 @@ def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
                          f"{{\\an4\\pos({int(w * 0.06)},{int(top + n * size * 1.24)})\\fs{size}\\bord0\\shad0}}{text}")
     if preset.title and title.strip() and not (chat and preset.layout == "chat"):
         max_chars = max(8, int(w * 0.9 / (preset.title_size * 0.6)))
-        wrapped = "\\N".join(textwrap.wrap(_escape(title.upper()), max_chars)[:3])
+        wrapped = "\\N".join(title_lines(title, max_chars, preset.title_color, preset.title_highlight))
         tags = f"\\pos({w // 2},{int(h * preset.title_y)})"
         if preset.title_anim:
             tags += "\\fad(200,0)\\fscx60\\fscy60\\t(0,250,\\fscx100\\fscy100)"
         span = f"{ass_time(0)},{ass_time(clip_len)}"
-        if preset.title_glow:
+        if preset.title_box:  # хук на плашке — без свечения и обводки
+            lines.append(f"Dialogue: 2,{span},TitleBox,{{{tags}}}{wrapped}")
+        elif preset.title_glow:
             glow = ass_color(preset.title_glow)
             lines.append(f"Dialogue: 1,{span},Title,{{{tags}\\1c{glow}&\\3c{glow}&\\bord10\\blur14\\shad0}}{wrapped}")
             tags += f"\\3c{glow}&\\bord2\\blur1\\shad0"
-        lines.append(f"Dialogue: 2,{span},Title,{{{tags}}}{wrapped}")
+        if not preset.title_box:
+            lines.append(f"Dialogue: 2,{span},Title,{{{tags}}}{wrapped}")
     if preset.watermark.strip():
         lines.append(f"Dialogue: 3,{ass_time(0)},{ass_time(clip_len)},Sub,"
                      f"{{\\pos({w // 2},{int(h * preset.watermark_y)})\\fs30\\bord2\\alpha&H50&}}{_escape(preset.watermark)}")

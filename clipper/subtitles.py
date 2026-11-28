@@ -60,7 +60,7 @@ def chat_lines(user: str, text: str, preset: Preset, size: int = 44) -> list[str
 
 
 def title_lines(title: str, max_chars: int, color: str, highlight: str, upper: bool = True,
-                shown: int | None = None) -> list[str]:
+                shown: int | None = None, first_color: str = "") -> list[str]:
     """Хук в 1–3 строки; слова между звёздочками красятся в цвет выделения.
 
     shown — сколько первых слов видно (остальные занимают место, но прозрачны): так хук «печатается».
@@ -84,7 +84,10 @@ def title_lines(title: str, max_chars: int, color: str, highlight: str, upper: b
         rows.append(row)
     base, hi = ass_color(color), ass_color(highlight)
     out, k = [], 0
-    for r in rows[:3]:
+    for n, r in enumerate(rows[:3]):
+        if first_color:  # первая строка своим цветом, выделение работает в остальных
+            base = ass_color(first_color) if n == 0 else ass_color(color)
+            r = [(word, mark and n > 0) for word, mark in r]
         parts = []
         for word, mark in r:
             hidden = "\\alpha&HFF&" if shown is not None and k >= shown else "\\alpha&H00&"
@@ -156,7 +159,7 @@ def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
             if b <= a:
                 continue
             wrapped = "\\N".join(title_lines(title, max_chars, preset.title_color, preset.title_highlight,
-                                             preset.title_upper, shown))
+                                             preset.title_upper, shown, preset.title_first_color))
             span = f"{ass_time(a)},{ass_time(b)}"
             if preset.title_box:  # хук на плашке — без свечения и обводки
                 lines.append(f"Dialogue: 2,{span},TitleBox,{{{tags}}}{wrapped}")
@@ -173,7 +176,8 @@ def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
 
     if preset.subtitles:
         pop = "\\fscx82\\fscy82\\t(0,90,\\fscx100\\fscy100)" if preset.subtitle_pop else ""
-        pos = f"{{\\pos({w // 2},{int(h * preset.subtitle_y)}){pop}}}"
+        slant = "\\i1" if preset.subtitle_italic else ""
+        pos = f"{{\\pos({w // 2},{int(h * preset.subtitle_y)}){pop}{slant}}}"
         hi, base = ass_color(preset.subtitle_highlight), ass_color(preset.subtitle_color)
         n = max(1, preset.subtitle_words)
         for group in word_groups(words, n, line_chars(preset)):
@@ -186,7 +190,8 @@ def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
                 # «ааааааааа» на всю ширину кадра сжимаем до трёх букв
                 shown = [re.sub(r"(.)\1{3,}", r"\1\1\1", censor_word(g.text) if preset.censor else g.text) for g in group]
                 if preset.subtitle_lower:
-                    shown = [t.lower().strip(".,!;:…-–—\"«»") for t in shown]
+                    drop = "-–—\"«»" if preset.subtitle_punct else ".,!;:…-–—\"«»"
+                    shown = [t.lower().strip(drop) for t in shown]
                 texts = [_escape(t.upper() if preset.subtitle_upper else t) for t in shown]
                 parts = [f"{{\\c{hi}&}}{t}{{\\c{base}&}}" if k == j else t for k, t in enumerate(texts)]
                 lines.append(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Sub,{pos}{' '.join(parts)}")

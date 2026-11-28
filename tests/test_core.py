@@ -394,3 +394,29 @@ def test_streamer_banner_default(tmp_path, monkeypatch):
     own = server.streamer_banner(p, Preset(name="t", ad_break="свой.mp4"))
     assert own.ad_break == "свой.mp4"
     assert server.streamer_banner({"streamer": ""}, Preset(name="t")).ad_break == ""
+
+
+def test_stickers_and_two_color_hook():
+    from clipper.models import Word, Preset
+    from clipper.stickers import STICKERS, FOLDER, find
+    from clipper.subtitles import title_lines, build_ass
+    from clipper.render import build_filter, _Ins
+    from pathlib import Path
+    assert all((FOLDER / f"{name}.png").exists() for name, _, _ in STICKERS)
+    words = [Word(text=t, start=i * 1.5, end=i * 1.5 + 0.4) for i, t in enumerate(
+        ["ми", "дамо", "долари", "і", "автобус", "в", "Германію", "долари"])]
+    got = [(Path(i.file).stem, i.place) for i in find(words, 0)]
+    assert got == [("dollars", "right"), ("bus", "left"), ("germany", "right")]
+    rows = title_lines("калатай відправляє *вамоса* в *германію*", 20, "FFFFFF", "FF3B5C", False, None, "FFC81F")
+    assert "&H001FC8FF&" in rows[0] and "&H005C3BFF&" not in rows[0] and "&H005C3BFF&" in rows[1]
+    p = Preset.load("stickers", Path(__file__).parent.parent / "presets")
+    ass = build_ass(words, 0, 12, "тест", p)
+    assert "\\i1" in ass and "германію" in ass
+    graph = build_filter(p, False, False, None, inserts=[_Ins(str(FOLDER / "bus.png"), 1.0, 1.7, "left", 0.24)], first_insert=1)
+    assert "overlay=W*0.25-w/2:H*0.6-h/2" in graph
+
+
+def test_kick_clip_position(monkeypatch):
+    from clipper import kick
+    monkeypatch.setattr(kick, "_get", lambda url, *a: b'{"clip": {"livestream_id": "77", "vod_starts_at": 9852, "duration": 38}}')
+    assert kick.clip_position("https://kick.com/kalatay3/clips/clip_01ABC") == ("kalatay3", "77", 9852.0, 38.0)

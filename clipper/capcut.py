@@ -200,7 +200,8 @@ def export_clean_draft(source: Path, moment: Moment, preset: Preset, transcript:
             cursor = end + 0.002
             line = " ".join(w.text for w in group)
             if preset.subtitle_lower:
-                line = " ".join(w.text.lower().strip('.,!;:…-–—"«»') for w in group)
+                drop = '-–—"«»' if preset.subtitle_punct else '.,!;:…-–—"«»'
+                line = " ".join(w.text.lower().strip(drop) for w in group)
             text(line.upper() if preset.subtitle_upper else line, round(start, 3), round(end - start, 3) - 0.001,
                  preset.subtitle_size / 6, preset.subtitle_color, preset.subtitle_y, "subs")
     script.save()

@@ -116,6 +116,7 @@ class Preset(BaseModel):
     title_y: float = 0.12
     title_glow: str | None = None  # цвет неонового свечения, например A020F0
     title_highlight: str = "FFD400"  # цвет слов хука, выделенных звёздочками: «НЕЙБОР *РОЗБИВ МОНІТОР*»
+    title_first_color: str = ""  # свой цвет первой строки хука (RRGGBB); пусто — как у остальных
     title_box: str = ""  # цвет плашки под хуком (RRGGBB); пусто — хук с обводкой, без плашки
     title_anim: bool = False  # появление с увеличением
     title_upper: bool = True  # хук заглавными буквами
@@ -130,7 +131,9 @@ class Preset(BaseModel):
     subtitle_y: float = 0.72
     subtitle_words: int = 3
     subtitle_upper: bool = False
+    subtitle_italic: bool = False  # субтитры с наклоном
     subtitle_lower: bool = False  # субтитры строчными буквами, без точек и запятых
+    subtitle_punct: bool = False  # в строчных субтитрах оставлять точки и запятые
     normalize: bool = True  # выравнивать громкость до стандарта площадок (-14 LUFS)
     censor: bool = False  # закрывать мат звёздочками в субтитрах
     subtitle_pop: bool = False  # каждое слово «выпрыгивает»
@@ -147,6 +150,7 @@ class Preset(BaseModel):
     look_strength: float = 0.5
     denoise: float = 0.0  # шумоподавление 0..1
     sharpen: float = 0.0  # резкость 0..1
+    auto_stickers: bool = False  # картинки по смыслу слов: «доллары», «автобус», «Германия»
     lut: str = ""  # цветокор: файл .cube из материалов («владелец/luts/имя») или путь
     lut_strength: float = 1.0
     transition: str = "none"  # подборки: none — встык, fade — мягкое затемнение между кусками

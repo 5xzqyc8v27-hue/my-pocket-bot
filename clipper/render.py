@@ -49,7 +49,9 @@ def camera_filter(preset: Preset, length: float, peaks: list[float], events: lis
 
 IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp")
 AUDIO_EXT = (".mp3", ".wav", ".ogg", ".m4a", ".aac")
-PLACE_Y = {"top": "H*0.22-h/2", "center": "(H-h)/2", "bottom": "H*0.78-h/2", "full": "0"}
+PLACE_Y = {"top": "H*0.22-h/2", "center": "(H-h)/2", "bottom": "H*0.78-h/2", "full": "0",
+           "left": "H*0.6-h/2", "right": "H*0.6-h/2"}
+PLACE_X = {"left": "W*0.25-w/2", "right": "W*0.75-w/2"}
 
 
 def insert_filters(inserts: list, first_input: int, preset: Preset, last: str) -> tuple[list[str], str]:
@@ -71,7 +73,7 @@ def insert_filters(inserts: list, first_input: int, preset: Preset, last: str) -
             continue
         key = f",chromakey=0x{ins.key}:0.16:0.08" if ins.key else ""
         parts += [f"[{idx}:v]{size},format=rgba{key},setpts=PTS-STARTPTS+{ins.at:.3f}/TB[in{n}]",
-                  f"[{last}][in{n}]overlay=(W-w)/2:{PLACE_Y.get(place, PLACE_Y['center'])}"
+                  f"[{last}][in{n}]overlay={PLACE_X.get(place, '(W-w)/2')}:{PLACE_Y.get(place, PLACE_Y['center'])}"
                   f":{window}:eof_action=pass[vi{n}]"]
         last = f"vi{n}"
     return parts, last
@@ -349,7 +351,12 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
     peaks = [p for p in peaks if all(abs(p - e) > 1.5 for e in events)]
     camera = camera_filter(preset, out_len, peaks, events)
     inserts = []
-    for ins in moment.inserts:
+    wanted = list(moment.inserts)
+    if preset.auto_stickers and transcript:  # стикеры по смыслу слов
+        from .stickers import find as find_stickers
+        wanted += find_stickers(transcript.words_between(moment.start, moment.end), moment.start, preset.speed,
+                                length=out_len)
+    for ins in wanted:
         path = Path(resolve(ins.file)) if resolve else Path(ins.file)
         if path.exists() and 0 <= ins.at < out_len:
             inserts.append(_Ins(str(path.resolve()), ins.at, min(ins.duration, out_len - ins.at), ins.place, ins.scale))

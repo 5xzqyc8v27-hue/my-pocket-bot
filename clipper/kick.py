@@ -134,3 +134,77 @@ def live_info(channel: str) -> dict:
     stream = data.get("livestream") or {}
     return {"live": bool(stream) and stream.get("is_live", True), "title": stream.get("session_title") or "",
             "viewers": stream.get("viewer_count") or 0, "url": data.get("playback_url") or ""}
+
+
+# ---------- куски прямо из записи эфира ----------
+
+def _videos_raw(channel: str) -> list[dict]:
+    return _json(f"{slug_of(channel)}/videos")
+
+
+def vod_source(channel: str, livestream_id: str | int) -> str:
+    """Адрес записи эфира (папка с плейлистами) по номеру трансляции."""
+    for v in _videos_raw(channel):
+        if str(v.get("id")) == str(livestream_id) and v.get("source"):
+            return v["source"]
+    raise RuntimeError("Запись этого эфира на Kick не найдена — возможно, её уже удалили")
+
+
+def fetch_vod_range(source: str, start: float, end: float, target: Path, quality: str = "1080p60") -> Path:
+    """Скачивает отрезок записи эфира [start, end] секунд и сохраняет в mp4.
+
+    Запись лежит кусками по ~10 секунд — берём только те, что попадают в отрезок."""
+    base = source if source.endswith("/") else source.rsplit("/", 1)[0] + "/"
+    master = _get(base + "master.m3u8" if not source.endswith(".m3u8") else source).decode("utf-8", "replace")
+    variants = [line.strip() for line in master.splitlines() if line.strip().endswith("playlist.m3u8")]
+    variant = next((v for v in variants if v.startswith(quality)), variants[0] if variants else f"{quality}/playlist.m3u8")
+    folder = base + variant.rsplit("/", 1)[0] + "/"
+    t, picked, first = 0.0, [], None
+    dur = 0.0
+    for line in _get(base + variant).decode("utf-8", "replace").splitlines():
+        line = line.strip()
+        if line.startswith("#EXTINF:"):
+            dur = float(line[8:].split(",")[0])
+        elif line and not line.startswith("#"):
+            if t + dur > start and t < end:
+                picked.append(line)
+                first = t if first is None else first
+            t += dur
+            if t >= end:
+                break
+    if not picked:
+        raise RuntimeError("Этого отрезка нет в записи эфира")
+    raw = target.with_suffix(".ts")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with open(raw, "wb") as out:
+        for name in picked:
+            out.write(_get(urllib.parse.urljoin(folder, name)))
+    try:  # режем точно по границам уже без перекодирования целых кусков
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{max(0.0, start - first):.3f}", "-i", str(raw),
+                        "-t", f"{end - start:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                        "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(target)], check=True, timeout=900)
+    finally:
+        raw.unlink(missing_ok=True)
+    return target
+
+
+def clip_position(page_url: str) -> tuple[str, str, float, float]:
+    """Где клип зрителя находится в записи эфира: (канал, номер трансляции, секунда начала, длина)."""
+    m = re.search(r"kick\.com/([\w-]+)/clips/(clip_\w+)", page_url)
+    if not m:
+        raise RuntimeError("Нужна ссылка на клип Kick")
+    data = json.loads(_get(f"https://kick.com/api/v2/clips/{m.group(2)}"))
+    clip = data.get("clip") or data
+    if clip.get("vod_starts_at") is None:
+        raise RuntimeError("У клипа нет привязки к записи эфира")
+    return m.group(1), str(clip["livestream_id"]), float(clip["vod_starts_at"]), float(clip.get("duration") or 30)
+
+
+def fetch_clip_context(page_url: str, workdir: Path, before: float = 15.0, after: float = 25.0) -> Path:
+    """Тот же момент, что в клипе зрителя, но из записи эфира и с запасом до и после."""
+    channel, stream_id, at, length = clip_position(page_url)
+    start = max(0.0, at - before)
+    target = workdir / f"vod_{stream_id}_{int(start)}.mp4"
+    if target.exists() and target.stat().st_size > 0:
+        return target
+    return fetch_vod_range(vod_source(channel, stream_id), start, at + length + after, target)

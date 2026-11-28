@@ -24,8 +24,16 @@ def _get(url: str, start: int | None = None, length: int | None = None) -> bytes
     headers = {"User-Agent": UA, "Accept": "application/json, */*"}
     if start is not None:
         headers["Range"] = f"bytes={start}-{start + length - 1}"
-    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=120) as resp:
-        return resp.read()
+    import time
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=120) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429 or attempt == 4:  # 429 — Kick просит притормозить: ждём и пробуем снова
+                raise
+            time.sleep(4 * (attempt + 1))
+    return b""
 
 
 def _json(path: str):

@@ -433,3 +433,25 @@ def test_stickers_prefer_pack_emoji(tmp_path):
     got = [Path(i.file).name for i in find(words, 0, dirs=[pack])]
     assert got == ["смех_до_слез.mp4", "думает.mp4", "dollars.png", "хлопает.mp4"]
     assert [Path(i.file).name for i in find(words, 0)] == ["laugh.png", "thinking.png", "dollars.png"]
+
+
+def test_kick_retries_on_rate_limit(monkeypatch):
+    import io
+    import urllib.error
+    import urllib.request
+    from clipper import kick
+    calls = []
+
+    class Resp(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake(req, timeout=0):
+        calls.append(1)
+        if len(calls) < 3:
+            raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {}, None)
+        return Resp(b"ok")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    assert kick._get("https://kick.com/x") == b"ok" and len(calls) == 3

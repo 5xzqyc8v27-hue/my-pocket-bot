@@ -133,7 +133,7 @@ def export_draft(source: Path, moment: Moment, preset: Preset, transcript: Trans
 
 def export_clean_draft(source: Path, moment: Moment, preset: Preset, transcript: Transcript | None,
                        drafts_dir: Path, name: str | None = None, resolve=None, fonts: list[Path] | None = None,
-                       target_dir: str = "") -> Path:
+                       target_dir: str = "", stickers: list[Path] | None = None) -> Path:
     """Черновик для правки: готовый вертикальный ролик без надписей, а хук и субтитры — отдельными дорожками.
 
     Видео лежит внутри папки черновика. target_dir — где эта папка окажется на другом компьютере
@@ -153,7 +153,7 @@ def export_clean_draft(source: Path, moment: Moment, preset: Preset, transcript:
     folder = drafts_dir / name
     video = folder / "video.mp4"
     bare = preset.model_copy(update={"title": False, "subtitles": False, "watermark": "", "ad_break": "", "teaser": 0.0})
-    render_clip(source, moment, bare, video, transcript, None, resolve, fonts)
+    render_clip(source, moment, bare, video, transcript, None, resolve, fonts, stickers)
     pause_at, pause_len = None, 0.0
     banner = (Path(resolve(preset.ad_break)) if resolve else Path(preset.ad_break)) if preset.ad_break else None
     if banner and banner.is_file():  # рекламная пауза остаётся в ролике, текст после неё сдвигается

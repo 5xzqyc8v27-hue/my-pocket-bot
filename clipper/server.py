@@ -302,7 +302,8 @@ def render_job(pid: str, indexes: list[int], base: Preset, varied: bool = False,
                 p["warning"] = "Обратите внимание: " + "; ".join(dict.fromkeys(notes))
             set_status(p, "render", f"Монтирую {n} из {len(indexes)}: {m.title or 'без названия'}")
             name = f"{int(m.start):05d}_{slug(m.title)}_{preset.name}_{uuid.uuid4().hex[:4]}.mp4"
-            render_clip(video, m, preset, out_dir / name, tr, filler_of(p, preset, m), resolve=resolve_asset, fonts=fonts_of(p))
+            render_clip(video, m, preset, out_dir / name, tr, filler_of(p, preset, m), resolve=resolve_asset, fonts=fonts_of(p),
+                        stickers=[ASSETS / (p.get("streamer") or "common") / "emoji", ASSETS / "common" / "emoji"])
             with lock:
                 p.setdefault("clips", []).insert(0, {
                     "file": name, "title": m.title, "caption": m.caption, "hashtags": m.hashtags,
@@ -1341,7 +1342,8 @@ def capcut(req: CapcutReq):
         if req.clean:
             from .capcut import export_clean_draft
             path = export_clean_draft(Path(p["video"]), m, apply_face(req.preset, p.get("face")), transcript_of(p),
-                                      target, resolve=resolve_asset, fonts=fonts_of(p))
+                                      target, resolve=resolve_asset, fonts=fonts_of(p),
+                                      stickers=[ASSETS / (p.get("streamer") or "common") / "emoji", ASSETS / "common" / "emoji"])
         else:
             path = export_draft(Path(p["video"]), m, req.preset, transcript_of(p), target, resolve=resolve_asset)
     except ImportError:

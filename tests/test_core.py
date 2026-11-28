@@ -420,3 +420,16 @@ def test_kick_clip_position(monkeypatch):
     from clipper import kick
     monkeypatch.setattr(kick, "_get", lambda url, *a: b'{"clip": {"livestream_id": "77", "vod_starts_at": 9852, "duration": 38}}')
     assert kick.clip_position("https://kick.com/kalatay3/clips/clip_01ABC") == ("kalatay3", "77", 9852.0, 38.0)
+
+
+def test_stickers_prefer_pack_emoji(tmp_path):
+    from pathlib import Path
+    from clipper.models import Word
+    from clipper.stickers import find
+    pack = tmp_path / "emoji"; pack.mkdir()
+    for name in ("смех_до_слез.mp4", "думает.mp4", "22_Thinking_Face.webm", "хлопает.mp4", "картинка.png"):
+        (pack / name).write_bytes(b"x")
+    words = [Word(text=t, start=i * 3.0, end=i * 3.0 + 0.4) for i, t in enumerate(["сміюсь", "думаю", "долари", "красавчик"])]
+    got = [Path(i.file).name for i in find(words, 0, dirs=[pack])]
+    assert got == ["смех_до_слез.mp4", "думает.mp4", "dollars.png", "хлопает.mp4"]
+    assert [Path(i.file).name for i in find(words, 0)] == ["laugh.png", "thinking.png", "dollars.png"]

@@ -293,16 +293,18 @@ def screen_key(path: Path) -> str:
 
 def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
                 transcript: Transcript | None = None, filler: Path | None = None,
-                resolve=None, fonts: list[Path] | None = None) -> Path:
-    """Вырезает момент и монтирует его в вертикальный ролик."""
+                resolve=None, fonts: list[Path] | None = None, stickers: list[Path] | None = None) -> Path:
+    """Вырезает момент и монтирует его в вертикальный ролик.
+
+    stickers — папки с эмодзи из материалов: анимированные стикеры по смыслу слов берутся оттуда."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if preset.ad_break:
         banner = Path(resolve(preset.ad_break)) if resolve else Path(preset.ad_break)
         plain = preset.model_copy(update={"ad_break": ""})
         if not banner.is_file():
-            return render_clip(source, moment, plain, out_path, transcript, filler, resolve, fonts)
+            return render_clip(source, moment, plain, out_path, transcript, filler, resolve, fonts, stickers)
         with tempfile.TemporaryDirectory() as tmp:
-            body = render_clip(source, moment, plain, Path(tmp) / "body.mp4", transcript, filler, resolve, fonts)
+            body = render_clip(source, moment, plain, Path(tmp) / "body.mp4", transcript, filler, resolve, fonts, stickers)
             pauses = []
             if transcript and preset.teaser <= 0:  # пауза ставится между словами, а не посреди слова
                 pauses = [(w.end - moment.start) / preset.speed for w in transcript.words_between(moment.start, moment.end)]
@@ -324,7 +326,7 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
                     rest = plain.title_seconds - preset.teaser
                     body = plain.model_copy(update={"title": plain.title and rest > 0.3, "title_seconds": max(rest, 0.0),
                                                     "title_typed": False, "title_anim": False})
-                render_clip(source, moment, body, b, transcript, filler, resolve, fonts)
+                render_clip(source, moment, body, b, transcript, filler, resolve, fonts, stickers)
                 (Path(tmp) / "list.txt").write_text("file 'a.mp4'\nfile 'b.mp4'", encoding="utf-8")
                 run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", "list.txt",
                      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k",
@@ -355,7 +357,7 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
     if preset.auto_stickers and transcript:  # стикеры по смыслу слов
         from .stickers import find as find_stickers
         wanted += find_stickers(transcript.words_between(moment.start, moment.end), moment.start, preset.speed,
-                                length=out_len)
+                                length=out_len, dirs=stickers)
     for ins in wanted:
         path = Path(resolve(ins.file)) if resolve else Path(ins.file)
         if path.exists() and 0 <= ins.at < out_len:

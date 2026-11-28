@@ -47,7 +47,7 @@ def transcribe_sherpa(video: Path, model_size: str = "small", language: str | No
     import numpy as np
     import sherpa_onnx
 
-    size = model_size if model_size in ("tiny", "base", "small", "medium") else "small"
+    size = model_size if model_size in ("tiny", "base", "small", "medium", "large-v3") else "small"
     encoder, decoder, tokens, vad_path = _sherpa_files(size)
     rec = sherpa_onnx.OfflineRecognizer.from_whisper(encoder=str(encoder), decoder=str(decoder), tokens=str(tokens),
                                                      language=language or "", task="transcribe", num_threads=4)
@@ -74,6 +74,8 @@ def transcribe_sherpa(video: Path, model_size: str = "small", language: str | No
             stream.accept_waveform(16000, np.concatenate([samples, np.zeros(pad, dtype=np.float32)]))
             rec.decode_stream(stream)
             text = unloop(stream.result.text.strip())
+            if text[:1] in "[(" and text[-1:] in "])":  # «[музика]» и прочие выдуманные пометки на шуме
+                text = ""
             if text:
                 start = seg.start / 16000
                 out.segments.append(Segment(start=round(start, 2), end=round(start + len(samples) / 16000, 2), text=text))

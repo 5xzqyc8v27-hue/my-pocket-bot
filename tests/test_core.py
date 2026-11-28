@@ -343,3 +343,27 @@ def test_hook_highlight_and_top_pick():
                {"url": "c", "views": 30, "ts": day * 11, "duration": 300}, {"url": "d", "views": 20, "ts": day * 12, "duration": 15}]
     assert [e["url"] for e in pick_top_clips(entries, 3)] == ["a", "d"]
     assert list_top("ТОП 3", 1080, 1920) < list_top("ТОП 4 МОМЕНТИ КАЛАТАЯ НАЙКРАЩЕ В КІНЦІ", 1080, 1920)
+
+
+def test_dialog_format_pieces():
+    from pathlib import Path
+    from clipper.models import Preset, Word
+    from clipper.render import build_filter
+    from clipper.speaker import crop_graph, timeline
+    from clipper.subtitles import build_ass, title_lines, word_groups
+    import numpy as np
+    words = [Word(text=t, start=i * 0.4, end=i * 0.4 + 0.3) for i, t in enumerate(["Я", "зайшов.", "-", "І", "ви", "подивіться", "що", "тут"])]
+    groups = [[w.text for w in g] for g in word_groups(words, 3)]
+    assert groups == [["Я", "зайшов."], ["І", "ви", "подивіться"], ["що", "тут"]]
+    p = Preset.load("dialog", Path(__file__).parent.parent / "presets")
+    ass = build_ass(words, 0, 6, "*Вамос* рассказал про *детство*", p)
+    assert "зайшов" in ass and "ЗАЙШОВ" not in ass and "зайшов." not in ass
+    assert ass.count("Dialogue: 2,") >= 4 and "0:00:03.00" in ass  # хук печатается и уходит через 3 секунды
+    assert "\\alpha&HFF&" in title_lines("а б в", 20, "FFFFFF", "FF0000", False, 1)[0]
+    plan = {"cuts": [(0, 2, 0.1, 0.0, 0.3, 0.9), (2, 5, 0.6, 0.1, 0.25, 0.8)], "people": 2}
+    graph = ";".join(crop_graph(plan, "src", "v", 1080, 1920))
+    assert "split=2" in graph and "concat=n=2" in graph and "trim=start=2.000" in graph
+    assert "concat=n=2" in build_filter(p, False, False, None, speaker_plan=plan)
+    assert "crop=1080:1920" in build_filter(p, False, False, None)  # людей не нашли — кадр по центру
+    act = np.zeros((2, 50)); act[0, :25] = 2; act[1, 25:] = 2
+    assert [who for _, _, who in timeline(act)] == [0, 1]

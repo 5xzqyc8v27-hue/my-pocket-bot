@@ -118,6 +118,9 @@ class Preset(BaseModel):
     title_highlight: str = "FFD400"  # цвет слов хука, выделенных звёздочками: «НЕЙБОР *РОЗБИВ МОНІТОР*»
     title_box: str = ""  # цвет плашки под хуком (RRGGBB); пусто — хук с обводкой, без плашки
     title_anim: bool = False  # появление с увеличением
+    title_upper: bool = True  # хук заглавными буквами
+    title_seconds: float = 0.0  # сколько секунд держать хук (0 — весь ролик)
+    title_typed: bool = False  # слова хука появляются по одному
     teaser: float = 0.0  # секунд самого громкого места в самом начале ролика (0 — без тизера)
     # субтитры
     subtitles: bool = True
@@ -127,6 +130,7 @@ class Preset(BaseModel):
     subtitle_y: float = 0.72
     subtitle_words: int = 3
     subtitle_upper: bool = False
+    subtitle_lower: bool = False  # субтитры строчными буквами, без точек и запятых
     normalize: bool = True  # выравнивать громкость до стандарта площадок (-14 LUFS)
     censor: bool = False  # закрывать мат звёздочками в субтитрах
     subtitle_pop: bool = False  # каждое слово «выпрыгивает»
@@ -151,6 +155,7 @@ class Preset(BaseModel):
     ad_break_at: float = 0.5  # в какой доле ролика ставить (0.5 — посередине)
     ad_break_y: float = 0.6
     ad_break_scale: float = 0.94  # ширина баннера в долях кадра
+    ad_break_blur: int = 0  # размытие замершего кадра под баннером (0 — без размытия)
     ad_break_len: float = 4.0  # сколько секунд показывать баннер-картинку
     border: int = 0
     border_color: str = "FFFFFF"

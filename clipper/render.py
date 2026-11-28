@@ -80,7 +80,7 @@ def insert_filters(inserts: list, first_input: int, preset: Preset, last: str) -
 def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: str | None,
                  camera: str | None = None, inserts: list | None = None, first_insert: int = 0,
                  chat_rows: int = 0, cam_times: list | None = None, lut_name: str | None = None,
-                 plate_h: int = 0) -> str:
+                 plate_h: int = 0, speaker_plan: dict | None = None) -> str:
     """Собирает filter_complex под раскладку. Входы: 0 — исходник, 1 — залипалка, далее баннер."""
     W, H = preset.width, preset.height
     layout = preset.layout
@@ -139,7 +139,10 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
             parts += [f"[{idx}:v]scale={W}:{plate_h},setsar=1[plate]", f"{order}[plate]vstack=inputs=3[v]"]
         else:
             parts.append(f"{order}vstack[v]")
-    elif layout == "full":  # без вебки: вертикальный кусок кадра на весь экран
+    elif layout == "speaker" and speaker_plan:  # крупный план того, кто говорит, с переключениями
+        from .speaker import crop_graph
+        parts += crop_graph(speaker_plan, "src", "v", W, H)
+    elif layout in ("full", "speaker"):  # без вебки: вертикальный кусок кадра на весь экран
         zh = _even(H * preset.content_zoom)
         parts.append(f"[src]scale=-2:{zh},crop={W}:{H}:(iw-{W})*{preset.crop_x}:(ih-{H})/2[v]")
     elif layout == "chat":
@@ -192,7 +195,7 @@ def build_filter(preset: Preset, has_filler: bool, has_banner: bool, ass_name: s
 def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcript | None,
              filler: Path | None, tmp: Path, camera: str | None = None,
              inserts: list | None = None, cam_times: list | None = None,
-             fonts: list[Path] | None = None, resolve=None) -> list[str]:
+             fonts: list[Path] | None = None, resolve=None, speaker_plan: dict | None = None) -> list[str]:
     """Общая часть команды ffmpeg для ролика и для кадра предпросмотра."""
     lut_name = None
     if preset.lut:
@@ -251,7 +254,7 @@ def _prepare(source: Path, moment: Moment, preset: Preset, transcript: Transcrip
             cmd += ["-t", f"{ins.duration:.3f}"]
         cmd += ["-i", ins.file]
     return cmd + ["-filter_complex", build_filter(preset, use_filler, bool(banner), ass_name, camera,
-                                                  inserts, first, rows, cam_times, lut_name, plate_h)]
+                                                  inserts, first, rows, cam_times, lut_name, plate_h, speaker_plan)]
 
 
 class _Ins:
@@ -346,7 +349,17 @@ def render_clip(source: Path, moment: Moment, preset: Preset, out_path: Path,
         if path.exists() and 0 <= ins.at < out_len:
             inserts.append(_Ins(str(path.resolve()), ins.at, min(ins.duration, out_len - ins.at), ins.place, ins.scale))
     with tempfile.TemporaryDirectory() as tmp:
-        cmd = _prepare(source, moment, preset, transcript, filler, Path(tmp), camera, inserts, cam_times, fonts, resolve)
+        speaker_plan = None
+        if preset.layout == "speaker":
+            from .speaker import plan as speaker_cuts
+            try:
+                speaker_plan = speaker_cuts(source, moment.start, moment.duration, preset.width / preset.height)
+            except Exception:  # без OpenCV или при сбое анализа берём кадр по центру
+                speaker_plan = None
+            if speaker_plan and preset.speed != 1.0:
+                speaker_plan["cuts"] = [(c[0] / preset.speed, c[1] / preset.speed, *c[2:]) for c in speaker_plan["cuts"]]
+        cmd = _prepare(source, moment, preset, transcript, filler, Path(tmp), camera, inserts, cam_times, fonts, resolve,
+                       speaker_plan)
         first = 1 + int(bool(filler) and preset.layout in ("split", "chat")) + int(bool(preset.banner and (Path(resolve(preset.banner)) if resolve else Path(preset.banner)).exists()))
         sounds = [i for i in inserts if not i.file.lower().endswith(IMAGE_EXT) and has_audio(Path(i.file))]
         main_audio = has_audio(source)
@@ -390,7 +403,8 @@ def add_ad_break(clip: Path, banner: Path, preset: Preset, out_path: Path, pause
     sound = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
     cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(clip)]
     cmd += ["-loop", "1", "-t", f"{length:.3f}", "-i", str(banner)] if image else ["-t", f"{length:.3f}", "-i", str(banner)]
-    fc = [f"[0:v]trim=0:{at:.3f},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={length:.3f}[a]",
+    blur = (f",boxblur={preset.ad_break_blur}:2:enable='gte(t,{at:.3f})'" if preset.ad_break_blur > 0 else "")
+    fc = [f"[0:v]trim=0:{at:.3f},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={length:.3f}{blur}[a]",
           f"[1:v]scale={int(W * preset.ad_break_scale) // 2 * 2}:-2,format=rgba{chroma},setpts=PTS-STARTPTS+{at:.3f}/TB[bn]",
           f"[a][bn]overlay=(W-w)/2:H*{preset.ad_break_y}-h/2:enable='gte(t,{at:.3f})':eof_action=pass[a2]",
           f"[0:v]trim=start={at:.3f},setpts=PTS-STARTPTS[b]",

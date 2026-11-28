@@ -1948,6 +1948,8 @@ async def on_error(_: Request, exc: Exception):
 
 
 SAMPLE_TITLES = {
+    "kalatay_dialog_akkaunt": "Kalatay · диалог: за что забанили аккаунт", "kalatay_dialog_zheka": "Kalatay · диалог: Жека в Буковеле (банер)",
+    "kalatay_dialog_vamos": "Kalatay · диалог: Вамос про детство (банер)",
     "kalatay_top4": "Kalatay · ТОП 4 моменти", "kalatay_top3": "Kalatay · ТОП 3 приколи",
     "kalatay_hook_monitor": "Kalatay · хук: Розбив монітор", "kalatay_hook_biy": "Kalatay · хук: Бій з тінню",
     "kalatay_1_pryzhok_viry_baner": "Kalatay · Прижок віри (банер UPG)", "kalatay_2_gorobchyk_mem": "Kalatay · Горобчик (мем)",

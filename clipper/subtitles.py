@@ -59,10 +59,14 @@ def chat_lines(user: str, text: str, preset: Preset, size: int = 44) -> list[str
     return lines or [shown]
 
 
-def title_lines(title: str, max_chars: int, color: str, highlight: str) -> list[str]:
-    """Хук в 1–3 строки; слова между звёздочками красятся в цвет выделения."""
+def title_lines(title: str, max_chars: int, color: str, highlight: str, upper: bool = True,
+                shown: int | None = None) -> list[str]:
+    """Хук в 1–3 строки; слова между звёздочками красятся в цвет выделения.
+
+    shown — сколько первых слов видно (остальные занимают место, но прозрачны): так хук «печатается».
+    """
     words, hot = [], False
-    for raw in title.upper().split():
+    for raw in (title.upper() if upper else title).split():
         hot = hot or raw.startswith("*")
         word = raw.strip("*")
         if word:
@@ -79,7 +83,29 @@ def title_lines(title: str, max_chars: int, color: str, highlight: str) -> list[
     if row:
         rows.append(row)
     base, hi = ass_color(color), ass_color(highlight)
-    return [" ".join(f"{{\\c{hi if mark else base}&}}{_escape(word)}" for word, mark in r) for r in rows[:3]]
+    out, k = [], 0
+    for r in rows[:3]:
+        parts = []
+        for word, mark in r:
+            hidden = "\\alpha&HFF&" if shown is not None and k >= shown else "\\alpha&H00&"
+            parts.append(f"{{\\c{hi if mark else base}&{hidden}}}{_escape(word)}")
+            k += 1
+        out.append(" ".join(parts))
+    return out
+
+
+def word_groups(words: list[Word], size: int) -> list[list[Word]]:
+    """Слова по группам до size штук; группа не переходит через конец фразы и через паузу."""
+    groups, cur = [], []
+    words = [w for w in words if w.text.strip("-–— ")]  # одиночные тире из диалогов в субтитры не идут
+    for w in words:
+        if cur and (len(cur) >= size or cur[-1].text.rstrip()[-1:] in ".!?…" or w.start - cur[-1].end > 0.6):
+            groups.append(cur)
+            cur = []
+        cur.append(w)
+    if cur:
+        groups.append(cur)
+    return groups
 
 
 def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
@@ -110,19 +136,29 @@ def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
                          f"{{\\an4\\pos({int(w * 0.06)},{int(top + n * size * 1.24)})\\fs{size}\\bord0\\shad0}}{text}")
     if preset.title and title.strip() and not (chat and preset.layout == "chat"):
         max_chars = max(8, int(w * 0.9 / (preset.title_size * 0.6)))
-        wrapped = "\\N".join(title_lines(title, max_chars, preset.title_color, preset.title_highlight))
         tags = f"\\pos({w // 2},{int(h * preset.title_y)})"
-        if preset.title_anim:
+        if preset.title_anim and not preset.title_typed:
             tags += "\\fad(200,0)\\fscx60\\fscy60\\t(0,250,\\fscx100\\fscy100)"
-        span = f"{ass_time(0)},{ass_time(clip_len)}"
-        if preset.title_box:  # хук на плашке — без свечения и обводки
-            lines.append(f"Dialogue: 2,{span},TitleBox,{{{tags}}}{wrapped}")
-        elif preset.title_glow:
-            glow = ass_color(preset.title_glow)
-            lines.append(f"Dialogue: 1,{span},Title,{{{tags}\\1c{glow}&\\3c{glow}&\\bord10\\blur14\\shad0}}{wrapped}")
-            tags += f"\\3c{glow}&\\bord2\\blur1\\shad0"
-        if not preset.title_box:
-            lines.append(f"Dialogue: 2,{span},Title,{{{tags}}}{wrapped}")
+        until = min(clip_len, preset.title_seconds) if preset.title_seconds > 0 else clip_len
+        total = len(title.split())
+        # «печать»: каждые 0.13 с открывается ещё одно слово, затем хук стоит целиком
+        steps = [(i * 0.13, (i + 1) * 0.13, i + 1) for i in range(total - 1)] if preset.title_typed else []
+        steps.append((steps[-1][1] if steps else 0.0, until, None))
+        for a, b, shown in steps:
+            if b <= a:
+                continue
+            wrapped = "\\N".join(title_lines(title, max_chars, preset.title_color, preset.title_highlight,
+                                             preset.title_upper, shown))
+            span = f"{ass_time(a)},{ass_time(b)}"
+            if preset.title_box:  # хук на плашке — без свечения и обводки
+                lines.append(f"Dialogue: 2,{span},TitleBox,{{{tags}}}{wrapped}")
+                continue
+            if preset.title_glow:
+                glow = ass_color(preset.title_glow)
+                lines.append(f"Dialogue: 1,{span},Title,{{{tags}\\1c{glow}&\\3c{glow}&\\bord10\\blur14\\shad0}}{wrapped}")
+                lines.append(f"Dialogue: 2,{span},Title,{{{tags}\\3c{glow}&\\bord2\\blur1\\shad0}}{wrapped}")
+            else:
+                lines.append(f"Dialogue: 2,{span},Title,{{{tags}}}{wrapped}")
     if preset.watermark.strip():
         lines.append(f"Dialogue: 3,{ass_time(0)},{ass_time(clip_len)},Sub,"
                      f"{{\\pos({w // 2},{int(h * preset.watermark_y)})\\fs30\\bord2\\alpha&H50&}}{_escape(preset.watermark)}")
@@ -132,8 +168,7 @@ def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
         pos = f"{{\\pos({w // 2},{int(h * preset.subtitle_y)}){pop}}}"
         hi, base = ass_color(preset.subtitle_highlight), ass_color(preset.subtitle_color)
         n = max(1, preset.subtitle_words)
-        for i in range(0, len(words), n):
-            group = words[i:i + n]
+        for group in word_groups(words, n):
             for j, word in enumerate(group):
                 start = (word.start - clip_start) / speed
                 end = ((group[j + 1].start if j + 1 < len(group) else word.end) - clip_start) / speed
@@ -142,6 +177,8 @@ def build_ass(words: list[Word], clip_start: float, clip_len: float, title: str,
                     continue
                 # «ааааааааа» на всю ширину кадра сжимаем до трёх букв
                 shown = [re.sub(r"(.)\1{3,}", r"\1\1\1", censor_word(g.text) if preset.censor else g.text) for g in group]
+                if preset.subtitle_lower:
+                    shown = [t.lower().strip(".,!;:…-–—\"«»") for t in shown]
                 texts = [_escape(t.upper() if preset.subtitle_upper else t) for t in shown]
                 parts = [f"{{\\c{hi}&}}{t}{{\\c{base}&}}" if k == j else t for k, t in enumerate(texts)]
                 lines.append(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Sub,{pos}{' '.join(parts)}")

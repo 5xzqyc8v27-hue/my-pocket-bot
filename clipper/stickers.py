@@ -220,6 +220,8 @@ def find(words: list[Word], clip_start: float, speed: float = 1.0, limit: int = 
         for name, _, stems in STICKERS:
             if name not in used and hit(stems):
                 file = from_assets(HINTS.get(name, ()), index)
+                if file and str(file) in used:  # этот эмодзи из пака уже показывали — берём свою картинку
+                    file = None
                 builtin = FOLDER / f"{name}.png"
                 if file or builtin.exists():
                     chosen = (name, file or builtin)
@@ -234,7 +236,7 @@ def find(words: list[Word], clip_start: float, speed: float = 1.0, limit: int = 
             moving = chosen[1].suffix.lower() in MOVING
             out.append(Insert(file=str(chosen[1]), at=round(max(0.0, at - 0.1), 2), duration=2.0 if moving else 1.7,
                               place="right" if side % 2 == 0 else "left", scale=0.26 if moving else 0.24))
-            used.add(chosen[0])
+            used.update((chosen[0], str(chosen[1])))
             last, side = at, side + 1
         if len(out) >= limit:
             break
